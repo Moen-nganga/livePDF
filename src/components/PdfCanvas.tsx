@@ -7,6 +7,8 @@ const ZOOM = 1; // 1 canvas px = 1 PDF point at 100%; toolbar can scale this lat
 
 interface Props {
   page: Page;
+  /** When true, disables all editing — used for view-only share sessions. */
+  readOnly?: boolean;
 }
 
 /**
@@ -17,7 +19,7 @@ interface Props {
  *
  * Fabric object `id` (custom property) maps 1:1 to PageObject.id.
  */
-export function PdfCanvas({ page }: Props) {
+export function PdfCanvas({ page, readOnly = false }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const updateObject = useEditorStore((s) => s.updateObject);
@@ -45,7 +47,9 @@ export function PdfCanvas({ page }: Props) {
       width: page.width * ZOOM,
       height: page.height * ZOOM,
       backgroundColor: '#ffffff',
+      selection: !readOnly, // disables drag-to-select-multiple
     });
+    canvas.skipTargetFind = readOnly; // disables clicking/selecting individual objects entirely
     fabricRef.current = canvas;
 
     canvas.on('selection:created', (e) => {
@@ -76,7 +80,7 @@ export function PdfCanvas({ page }: Props) {
       wrapper.innerHTML = '';
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page.id]);
+  }, [page.id, readOnly]);
 
   // Render background image (uploaded PDF page) when it changes
   useEffect(() => {

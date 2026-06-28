@@ -4,10 +4,12 @@ import { useAutoSave } from './hooks/useAutoSave';
 import { cacheDocumentForOffline, listCachedDocuments } from './lib/offlineCache';
 import { api } from './lib/api';
 import { Toolbar } from './components/Toolbar';
+import { EditableTitle } from './components/EditableTitle';
+import { FileMenu } from './components/FileMenu';
 import { PdfCanvas } from './components/PdfCanvas';
 import { PageNav } from './components/PageNav';
 import { UploadButton } from './components/UploadButton';
-import { exportToPdf } from './lib/exportPdf';
+import { DownloadDialog } from './components/DownloadDialog';
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -29,6 +31,9 @@ export default function App() {
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
   const createBlankDocument = useEditorStore((s) => s.createBlankDocument);
   const loadDocument = useEditorStore((s) => s.loadDocument);
+  const shareSession = useEditorStore((s) => s.shareSession);
+  const setShareSession = useEditorStore((s) => s.setShareSession);
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const online = useOnlineStatus();
   const saveStatus = useAutoSave();
 
@@ -45,12 +50,29 @@ export default function App() {
     }
   }, []);
 
-  // On first load: try to resume the most recent document from the backend,
-  // falling back to the offline cache if there's no connection, falling
-  // back to a fresh blank document if neither has anything.
+  // On first load: check for a share link first (?share=token in the URL).
+  // If present, this browser is a visitor, not the owner — load via the
+  // token instead of the normal "resume my most recent document" flow,
+  // and skip the offline-cache fallback, since a shared doc isn't this
+  // device's own content to remember between sessions.
   useEffect(() => {
     if (document) return;
+    const shareToken = new URLSearchParams(window.location.search).get('share');
+
     (async () => {
+      if (shareToken) {
+        try {
+          const { document: shared, access } = await api.getSharedDocument(shareToken);
+          setShareSession({ token: shareToken, access });
+          loadDocument(shared);
+          return;
+        } catch (err) {
+          alert(err instanceof Error ? err.message : 'This share link could not be opened.');
+          // Fall through to the normal flow below so the visitor isn't
+          // stuck on a dead end if the link is bad/revoked.
+        }
+      }
+
       if (navigator.onLine) {
         try {
           const docs = await api.listDocuments();
@@ -85,6 +107,9 @@ export default function App() {
     return <div style={{ padding: 24 }}>Loading…</div>;
   }
 
+  const isOwner = shareSession === null;
+  const isReadOnly = shareSession?.access === 'view';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header
@@ -96,20 +121,41 @@ export default function App() {
           borderBottom: '1px solid #ddd',
         }}
       >
-        <strong>{document.title}</strong>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {isOwner && <FileMenu />}
+          <EditableTitle />
+          {isReadOnly && (
+            <span style={{ fontSize: 12, color: '#996600', background: '#fff3cc', padding: '2px 8px', borderRadius: 4 }}>
+              View only
+            </span>
+          )}
+          {shareSession?.access === 'edit' && (
+            <span style={{ fontSize: 12, color: '#1a6b3c', background: '#e3f6ea', padding: '2px 8px', borderRadius: 4 }}>
+              Editing via shared link
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <span style={{ fontSize: 13, color: '#666' }}>
-            {online ? saveStatusLabel(saveStatus) : 'Offline — viewing only, edits will not be saved'}
+            {isReadOnly
+              ? ''
+              : online
+                ? saveStatusLabel(saveStatus)
+                : 'Offline — viewing only, edits will not be saved'}
           </span>
-          <UploadButton />
-          <button onClick={() => exportToPdf(document)}>Download PDF</button>
+          {isOwner && <UploadButton />}
+          <button onClick={() => setDownloadDialogOpen(true)}>Download PDF</button>
         </div>
       </header>
 
-      <Toolbar />
+      {downloadDialogOpen && (
+        <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
+      )}
+
+      {!isReadOnly && <Toolbar />}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <PageNav />
+        {isOwner && <PageNav />}
         <main
           style={{
             flex: 1,
@@ -120,7 +166,7 @@ export default function App() {
             padding: 24,
           }}
         >
-          <PdfCanvas page={document.pages[activePageIndex] ?? document.pages[0]} />
+          <PdfCanvas page={document.pages[activePageIndex] ?? document.pages[0]} readOnly={isReadOnly} />
         </main>
       </div>
     </div>

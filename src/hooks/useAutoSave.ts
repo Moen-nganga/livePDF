@@ -12,11 +12,20 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
  */
 export function useAutoSave(delayMs = 1200) {
   const document = useEditorStore((s) => s.document);
+  const shareSession = useEditorStore((s) => s.shareSession);
   const [status, setStatus] = useState<SaveStatus>('idle');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!document) return;
+
+    // A view-only share session has nothing to save — the visitor can
+    // look but the canvas itself is also set read-only (see App.tsx), so
+    // this path mainly guards against any stray store updates.
+    if (shareSession?.access === 'view') {
+      setStatus('idle');
+      return;
+    }
 
     if (timerRef.current) clearTimeout(timerRef.current);
 
@@ -27,7 +36,11 @@ export function useAutoSave(delayMs = 1200) {
       }
       setStatus('saving');
       try {
-        await api.saveDocument(document);
+        if (shareSession?.access === 'edit') {
+          await api.saveSharedDocument(shareSession.token, document);
+        } else {
+          await api.saveDocument(document);
+        }
         setStatus('saved');
       } catch {
         setStatus('error');
@@ -38,7 +51,7 @@ export function useAutoSave(delayMs = 1200) {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [document, delayMs]);
+  }, [document, delayMs, shareSession]);
 
   // Reflect connectivity changes immediately, not just on next edit
   useEffect(() => {

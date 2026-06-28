@@ -8,9 +8,22 @@ interface EditorState {
   activePageIndex: number;
   selectedObjectId: string | null;
 
+  // Set when the document was opened via a share link (?share=token)
+  // instead of as the owner. null means normal owner session.
+  shareSession: { token: string; access: 'view' | 'edit' } | null;
+  setShareSession: (session: { token: string; access: 'view' | 'edit' } | null) => void;
+
+  // Lets FileMenu's "Rename" item trigger EditableTitle's inline edit mode
+  // even though the two components aren't in a parent/child relationship —
+  // the store is the shared channel between them.
+  isRenamingTitle: boolean;
+  setIsRenamingTitle: (value: boolean) => void;
+
   // Document lifecycle
   createBlankDocument: (sizeName: PageSizeName) => void;
   loadDocument: (doc: PDFDocument) => void;
+  renameDocument: (title: string) => void;
+  copyDocument: () => PDFDocument | null;
 
   // Pages
   addBlankPage: (sizeName: PageSizeName) => void;
@@ -41,6 +54,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   document: null,
   activePageIndex: 0,
   selectedObjectId: null,
+  shareSession: null,
+  setShareSession: (session) => set({ shareSession: session }),
+  isRenamingTitle: false,
+  setIsRenamingTitle: (value) => set({ isRenamingTitle: value }),
 
   createBlankDocument: (sizeName) =>
     set(() => ({
@@ -61,6 +78,19 @@ export const useEditorStore = create<EditorState>((set) => ({
       activePageIndex: 0,
       selectedObjectId: null,
     })),
+
+  renameDocument: (title) =>
+    set((state) => {
+      if (!state.document) return state;
+      const trimmed = title.trim();
+      return {
+        document: {
+          ...state.document,
+          title: trimmed || state.document.title, // never allow an empty title
+          updatedAt: Date.now(),
+        },
+      };
+    }),
 
   addBlankPage: (sizeName) =>
     set((state) => {
@@ -194,6 +224,36 @@ export const useEditorStore = create<EditorState>((set) => ({
           state.selectedObjectId === objectId ? null : state.selectedObjectId,
       };
     }),
+
+  copyDocument: () => {
+    let createdCopy: PDFDocument | null = null;
+
+    set((state) => {
+      if (!state.document) return state;
+
+      const copy: PDFDocument = {
+        ...state.document,
+        id: nanoid(),
+        title: `Copy of ${state.document.title}`,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        // Fresh ids throughout — a copy must not share any id with the
+        // original, or future per-id store operations (rename a page,
+        // delete an object) could accidentally affect both documents if
+        // they were ever loaded into the same client logic at once.
+        pages: state.document.pages.map((p) => ({
+          ...p,
+          id: nanoid(),
+          objects: p.objects.map((o) => ({ ...o, id: nanoid() })),
+        })),
+      };
+
+      createdCopy = copy;
+      return { document: copy, activePageIndex: 0, selectedObjectId: null };
+    });
+
+    return createdCopy;
+  },
 
   setSelectedObjectId: (id) => set({ selectedObjectId: id }),
 }));
