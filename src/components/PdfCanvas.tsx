@@ -171,6 +171,41 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [objectIds]);
 
+  // Sync IN-PLACE PROPERTY EDITS for text (font family/size changed via the
+  // toolbar's font controls). Deliberately separate from the add/remove
+  // effects above and keyed on a narrow fingerprint of just these two
+  // fields — not the whole objects array — so typing in a text box or
+  // dragging an object doesn't cause this to fire and fight with Fabric's
+  // own live state the way the original all-in-one sync effect did.
+  const textStyleFingerprint = page.objects
+    .filter((o) => o.type === 'text')
+    .map((o) => `${o.id}:${o.fontFamily}:${o.fontSize}`)
+    .join(',');
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+
+    page.objects.forEach((obj) => {
+      if (obj.type !== 'text') return;
+      const fabricObj = canvas
+        .getObjects()
+        .find((o) => (o as fabric.Object & { id?: string }).id === obj.id) as
+        | fabric.Textbox
+        | undefined;
+      if (!fabricObj) return;
+
+      // Only touch the canvas if something actually differs — avoids
+      // unnecessary re-renders and avoids clobbering in-progress text
+      // editing state (cursor position) on every render.
+      if (fabricObj.fontFamily !== obj.fontFamily || fabricObj.fontSize !== obj.fontSize) {
+        fabricObj.set({ fontFamily: obj.fontFamily, fontSize: obj.fontSize });
+      }
+    });
+
+    canvas.requestRenderAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textStyleFingerprint]);
+
   // Delete the selected object with Delete/Backspace, since there's no
   // dedicated delete button yet. Fabric's own keyboard handling only
   // covers text editing, not object deletion, so we add this ourselves.

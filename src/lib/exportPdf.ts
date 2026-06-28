@@ -1,5 +1,44 @@
 import { PDFDocument as PdfLibDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
+import type { PDFFont } from 'pdf-lib';
 import type { PDFDocument, PageObject } from '../types/document';
+
+/**
+ * Maps our on-screen web-safe font names to the closest pdf-lib
+ * StandardFonts equivalent. pdf-lib can only embed its own built-in set
+ * (Helvetica, Times-Roman, Courier, and their bold/italic variants) without
+ * fetching and embedding real font files, which we're deliberately not
+ * doing — see fonts.ts for why. Fonts without an exact match fall back to
+ * the closest visual analog (e.g. all sans-serif fonts -> Helvetica).
+ */
+const FONT_BASE_MAP: Record<string, 'Helvetica' | 'TimesRoman' | 'Courier'> = {
+  Arial: 'Helvetica',
+  Helvetica: 'Helvetica',
+  Verdana: 'Helvetica',
+  'Trebuchet MS': 'Helvetica',
+  'Comic Sans MS': 'Helvetica',
+  Impact: 'Helvetica',
+  'Times New Roman': 'TimesRoman',
+  Georgia: 'TimesRoman',
+  Palatino: 'TimesRoman',
+  Garamond: 'TimesRoman',
+  'Courier New': 'Courier',
+};
+
+interface FontSet {
+  Helvetica: PDFFont;
+  HelveticaBold: PDFFont;
+  TimesRoman: PDFFont;
+  TimesRomanBold: PDFFont;
+  Courier: PDFFont;
+  CourierBold: PDFFont;
+}
+
+function pickFont(fonts: FontSet, fontFamily: string, bold: boolean): PDFFont {
+  const base = FONT_BASE_MAP[fontFamily] ?? 'Helvetica';
+  if (base === 'TimesRoman') return bold ? fonts.TimesRomanBold : fonts.TimesRoman;
+  if (base === 'Courier') return bold ? fonts.CourierBold : fonts.Courier;
+  return bold ? fonts.HelveticaBold : fonts.Helvetica;
+}
 
 /**
  * Builds a real PDF from our document model and saves it, letting the
@@ -8,8 +47,14 @@ import type { PDFDocument, PageObject } from '../types/document';
  */
 export async function exportToPdf(doc: PDFDocument, filename: string): Promise<void> {
   const pdf = await PdfLibDocument.create();
-  const helvetica = await pdf.embedFont(StandardFonts.Helvetica);
-  const helveticaBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const fonts: FontSet = {
+    Helvetica: await pdf.embedFont(StandardFonts.Helvetica),
+    HelveticaBold: await pdf.embedFont(StandardFonts.HelveticaBold),
+    TimesRoman: await pdf.embedFont(StandardFonts.TimesRoman),
+    TimesRomanBold: await pdf.embedFont(StandardFonts.TimesRomanBold),
+    Courier: await pdf.embedFont(StandardFonts.Courier),
+    CourierBold: await pdf.embedFont(StandardFonts.CourierBold),
+  };
 
   for (const page of doc.pages) {
     const pdfPage = pdf.addPage([page.width, page.height]);
@@ -20,7 +65,7 @@ export async function exportToPdf(doc: PDFDocument, filename: string): Promise<v
     }
 
     for (const obj of page.objects) {
-      await drawObject(pdf, pdfPage, obj, page.height, helvetica, helveticaBold);
+      await drawObject(pdf, pdfPage, obj, page.height, fonts);
     }
   }
 
@@ -57,14 +102,13 @@ async function drawObject(
   pdfPage: import('pdf-lib').PDFPage,
   obj: PageObject,
   pageHeight: number,
-  helvetica: import('pdf-lib').PDFFont,
-  helveticaBold: import('pdf-lib').PDFFont
+  fonts: FontSet
 ) {
   const rotate = obj.rotation ? degrees(-obj.rotation) : undefined; // pdf-lib rotates counter-clockwise
 
   switch (obj.type) {
     case 'text': {
-      const font = obj.bold ? helveticaBold : helvetica;
+      const font = pickFont(fonts, obj.fontFamily, obj.bold);
       pdfPage.drawText(obj.text, {
         x: obj.x,
         y: flipY(obj.y, obj.fontSize, pageHeight) - (obj.height - obj.fontSize), // align to top of box
@@ -185,7 +229,12 @@ async function saveBytes(bytes: Uint8Array, filename: string): Promise<void> {
   // isn't choosable this way, but the browser's own download prompt
   // still lets the person rename the file if their browser is configured
   // to ask where to save downloads.
-  const blob = new Blob([bytes], { type: 'application/pdf' });
+  // pdf-lib's Uint8Array is typed against ArrayBufferLike, which TS's
+  // newer BlobPart type doesn't accept (it could theoretically be a
+  // SharedArrayBuffer). Copying into a fresh Uint8Array guarantees a plain
+  // ArrayBuffer backing, satisfying the type checker with no behavior change.
+  const plainBytes = new Uint8Array(bytes);
+  const blob = new Blob([plainBytes], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
   const a = window.document.createElement('a');
   a.href = url;

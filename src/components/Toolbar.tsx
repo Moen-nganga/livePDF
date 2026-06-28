@@ -2,7 +2,8 @@ import { useRef } from 'react';
 import { nanoid } from 'nanoid';
 import * as fabric from 'fabric';
 import { useEditorStore } from '../store/editorStore';
-import type { PageObject } from '../types/document';
+import type { PageObject, TextObject } from '../types/document';
+import { WEB_SAFE_FONTS, FONT_SIZES } from '../lib/fonts';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
@@ -18,9 +19,19 @@ export function Toolbar() {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
   const addObject = useEditorStore((s) => s.addObject);
+  const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
+  const updateObject = useEditorStore((s) => s.updateObject);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activePage = document?.pages[activePageIndex];
+  const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);
+  const selectedText: TextObject | undefined =
+    selectedObject?.type === 'text' ? selectedObject : undefined;
+
+  function updateSelectedText(patch: Partial<TextObject>) {
+    if (!activePage || !selectedText) return;
+    updateObject(activePage.id, selectedText.id, patch);
+  }
 
   function addText() {
     if (!activePage) return;
@@ -127,6 +138,31 @@ export function Toolbar() {
       <button onClick={addRect}>+ Rectangle</button>
       <button onClick={addEllipse}>+ Ellipse</button>
       <button onClick={() => fileInputRef.current?.click()}>+ Image</button>
+
+      <Divider />
+
+      <select
+        value={selectedText?.fontFamily ?? ''}
+        disabled={!selectedText}
+        onChange={(e) => updateSelectedText({ fontFamily: e.target.value })}
+        style={{ fontFamily: selectedText?.fontFamily, minWidth: 130 }}
+        title={selectedText ? 'Font' : 'Select a text box to change its font'}
+      >
+        {!selectedText && <option value="">Font</option>}
+        {WEB_SAFE_FONTS.map((font) => (
+          <option key={font} value={font} style={{ fontFamily: font }}>
+            {font}
+          </option>
+        ))}
+      </select>
+
+      <FontSizeStepper
+        value={selectedText?.fontSize}
+        disabled={!selectedText}
+        onChange={(size) => updateSelectedText({ fontSize: size })}
+      />
+
+      <Divider />
       <span style={{ fontSize: 12, color: '#888', alignSelf: 'center', marginLeft: 8 }}>
         Double-click text to edit it · select an object and press Delete to remove it
       </span>
@@ -137,6 +173,59 @@ export function Toolbar() {
         style={{ display: 'none' }}
         onChange={handleImagePick}
       />
+    </div>
+  );
+}
+
+function Divider() {
+  return <div style={{ width: 1, background: '#ddd', margin: '2px 4px' }} />;
+}
+
+interface FontSizeStepperProps {
+  value: number | undefined;
+  disabled: boolean;
+  onChange: (size: number) => void;
+}
+
+/**
+ * Mirrors the −  [number]  + control from the reference screenshot. Typing
+ * a custom value directly into the number field is also supported, not
+ * just stepping through the preset list, since locking people into only
+ * the preset sizes is more restrictive than the reference UI actually is.
+ */
+function FontSizeStepper({ value, disabled, onChange }: FontSizeStepperProps) {
+  function step(direction: 1 | -1) {
+    if (value === undefined) return;
+    const sizes = FONT_SIZES as readonly number[];
+    const currentIndex = sizes.indexOf(value);
+    if (currentIndex === -1) {
+      // Custom value not in the preset list — just nudge by 1 instead of
+      // jumping to a preset, so stepping feels predictable either way.
+      onChange(Math.max(1, value + direction));
+      return;
+    }
+    const nextIndex = Math.min(sizes.length - 1, Math.max(0, currentIndex + direction));
+    onChange(sizes[nextIndex]);
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      <button onClick={() => step(-1)} disabled={disabled} title="Decrease font size" style={{ width: 28 }}>
+        −
+      </button>
+      <input
+        type="number"
+        value={value ?? ''}
+        disabled={disabled}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (!Number.isNaN(next) && next > 0) onChange(next);
+        }}
+        style={{ width: 44, textAlign: 'center' }}
+      />
+      <button onClick={() => step(1)} disabled={disabled} title="Increase font size" style={{ width: 28 }}>
+        +
+      </button>
     </div>
   );
 }
