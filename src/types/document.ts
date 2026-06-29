@@ -35,7 +35,10 @@ export interface TextObject extends BaseObject {
   color: string; // hex
   bold: boolean;
   italic: boolean;
+  strikethrough: boolean;
   align: 'left' | 'center' | 'right';
+  /** When set, this text becomes a clickable hyperlink in the exported PDF. */
+  link?: string;
 }
 
 export interface RectObject extends BaseObject {

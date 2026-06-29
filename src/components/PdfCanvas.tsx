@@ -70,6 +70,31 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       });
     });
 
+    // Ctrl/Cmd+Click opens a linked text object's URL, mirroring the
+    // browser convention of "modifier+click opens a link" — a plain click
+    // is already used for select/drag, so it can't double as "open link"
+    // without breaking normal editing.
+    canvas.on('mouse:down', (e) => {
+      const isModified = e.e.ctrlKey || e.e.metaKey;
+      if (!isModified) return;
+      const target = e.target as (fabric.Object & { link?: string }) | undefined;
+      if (target?.link) {
+        window.open(target.link, '_blank', 'noopener,noreferrer');
+      }
+    });
+
+    // Lightweight hover hint: show a pointer cursor over a linked object,
+    // independent of whether Ctrl happens to be held — simpler than
+    // tracking live key state, and still communicates "this is clickable"
+    // without needing to perfectly match browser link-hover semantics.
+    canvas.on('mouse:over', (e) => {
+      const target = e.target as (fabric.Object & { link?: string }) | undefined;
+      if (target?.link) canvas.defaultCursor = 'pointer';
+    });
+    canvas.on('mouse:out', () => {
+      canvas.defaultCursor = 'default';
+    });
+
     return () => {
       canvas.dispose();
       fabricRef.current = null;
@@ -171,15 +196,18 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [objectIds]);
 
-  // Sync IN-PLACE PROPERTY EDITS for text (font family/size changed via the
-  // toolbar's font controls). Deliberately separate from the add/remove
-  // effects above and keyed on a narrow fingerprint of just these two
-  // fields — not the whole objects array — so typing in a text box or
-  // dragging an object doesn't cause this to fire and fight with Fabric's
-  // own live state the way the original all-in-one sync effect did.
+  // Sync IN-PLACE PROPERTY EDITS for text (font family/size/style/color
+  // changed via the toolbar's text controls). Deliberately separate from
+  // the add/remove effects above and keyed on a narrow fingerprint of just
+  // these fields — not the whole objects array — so typing in a text box
+  // or dragging an object doesn't cause this to fire and fight with
+  // Fabric's own live state the way the original all-in-one sync effect did.
   const textStyleFingerprint = page.objects
     .filter((o) => o.type === 'text')
-    .map((o) => `${o.id}:${o.fontFamily}:${o.fontSize}`)
+    .map(
+      (o) =>
+        `${o.id}:${o.fontFamily}:${o.fontSize}:${o.bold}:${o.italic}:${o.strikethrough}:${o.color}:${o.link ?? ''}`
+    )
     .join(',');
   useEffect(() => {
     const canvas = fabricRef.current;
@@ -197,14 +225,65 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       // Only touch the canvas if something actually differs — avoids
       // unnecessary re-renders and avoids clobbering in-progress text
       // editing state (cursor position) on every render.
-      if (fabricObj.fontFamily !== obj.fontFamily || fabricObj.fontSize !== obj.fontSize) {
-        fabricObj.set({ fontFamily: obj.fontFamily, fontSize: obj.fontSize });
+      const fontWeight = obj.bold ? 'bold' : 'normal';
+      const fontStyle = obj.italic ? 'italic' : 'normal';
+      const linethrough = obj.strikethrough;
+      // Underline whenever a link is set, on top of whatever the text's own
+      // strikethrough state is — mirrors the universal "links are
+      // underlined" convention so it's visually obvious while editing.
+      const underline = !!obj.link;
+
+      if (
+        fabricObj.fontFamily !== obj.fontFamily ||
+        fabricObj.fontSize !== obj.fontSize ||
+        fabricObj.fontWeight !== fontWeight ||
+        fabricObj.fontStyle !== fontStyle ||
+        fabricObj.linethrough !== linethrough ||
+        fabricObj.underline !== underline ||
+        fabricObj.fill !== obj.color
+      ) {
+        fabricObj.set({
+          fontFamily: obj.fontFamily,
+          fontSize: obj.fontSize,
+          fontWeight,
+          fontStyle,
+          linethrough,
+          underline,
+          fill: obj.color,
+        });
       }
+      // Not part of Fabric's own style properties, so it's set directly
+      // rather than through .set() — this is what the Ctrl+Click handler
+      // below reads to decide where to navigate.
+      (fabricObj as fabric.Object & { link?: string }).link = obj.link;
     });
 
     canvas.requestRenderAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [textStyleFingerprint]);
+
+  // Sync ROTATION set via the toolbar's rotate button. Applies to every
+  // object type (not just text), and — like the text style effect above —
+  // is kept on its own narrow fingerprint so it only fires when rotation
+  // actually changes, not on every drag/resize.
+  const rotationFingerprint = page.objects.map((o) => `${o.id}:${o.rotation}`).join(',');
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+
+    page.objects.forEach((obj) => {
+      const fabricObj = canvas
+        .getObjects()
+        .find((o) => (o as fabric.Object & { id?: string }).id === obj.id);
+      if (!fabricObj) return;
+      if (fabricObj.angle !== obj.rotation) {
+        fabricObj.set({ angle: obj.rotation });
+      }
+    });
+
+    canvas.requestRenderAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rotationFingerprint]);
 
   // Delete the selected object with Delete/Backspace, since there's no
   // dedicated delete button yet. Fabric's own keyboard handling only
@@ -255,9 +334,12 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
         fill: obj.color,
         fontWeight: obj.bold ? 'bold' : 'normal',
         fontStyle: obj.italic ? 'italic' : 'normal',
+        linethrough: obj.strikethrough,
+        underline: !!obj.link,
         textAlign: obj.align,
       });
-      (t as fabric.Object & { id?: string }).id = obj.id;
+      (t as fabric.Object & { id?: string; link?: string }).id = obj.id;
+      (t as fabric.Object & { id?: string; link?: string }).link = obj.link;
       return t;
     }
     case 'rect': {
@@ -265,7 +347,7 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
         ...common,
         width: obj.width,
         height: obj.height,
-        fill: obj.fill,
+        fill: obj.fill ?? 'transparent', // Fabric needs an explicit value; 'transparent' renders as no fill, matching the undefined-fill case in the export pipeline
         stroke: obj.stroke,
         strokeWidth: obj.strokeWidth,
         rx: obj.cornerRadius,
@@ -279,7 +361,7 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
         ...common,
         rx: obj.width / 2,
         ry: obj.height / 2,
-        fill: obj.fill,
+        fill: obj.fill ?? 'transparent',
         stroke: obj.stroke,
         strokeWidth: obj.strokeWidth,
       });

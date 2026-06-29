@@ -1,5 +1,15 @@
-import { PDFDocument as PdfLibDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
-import type { PDFFont } from 'pdf-lib';
+import {
+  PDFDocument as PdfLibDocument,
+  rgb,
+  StandardFonts,
+  degrees,
+  PDFName,
+  PDFDict,
+  PDFArray,
+  PDFString,
+  PDFRef,
+} from 'pdf-lib';
+import type { PDFFont, PDFPage } from 'pdf-lib';
 import type { PDFDocument, PageObject } from '../types/document';
 
 /**
@@ -97,6 +107,42 @@ function flipY(y: number, height: number, pageHeight: number): number {
   return pageHeight - y - height;
 }
 
+/**
+ * Adds a clickable link annotation over a rectangular region of a page.
+ * pdf-lib has no high-level "add a link" API, so this builds the PDF
+ * annotation dictionary directly: a Link annotation with an invisible
+ * border (Border: [0,0,0]) and a URI action pointing at the target.
+ * The rectangle uses the same flipped (bottom-left-origin) coordinates
+ * as everything else drawn on the page.
+ */
+function addLinkAnnotation(
+  pdfPage: PDFPage,
+  url: string,
+  rect: { x: number; y: number; width: number; height: number }
+): void {
+  const pdf = pdfPage.doc;
+  const annotation = pdf.context.obj({
+    Type: 'Annot',
+    Subtype: 'Link',
+    Rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height],
+    Border: [0, 0, 0], // no visible box around the link — the text's own underline is the visual cue
+    A: {
+      Type: 'Action',
+      S: 'URI',
+      URI: PDFString.of(url),
+    },
+  });
+
+  const annotationRef: PDFRef = pdf.context.register(annotation);
+
+  const existingAnnots = pdfPage.node.lookup(PDFName.of('Annots'), PDFArray);
+  if (existingAnnots) {
+    existingAnnots.push(annotationRef);
+  } else {
+    pdfPage.node.set(PDFName.of('Annots'), pdf.context.obj([annotationRef]));
+  }
+}
+
 async function drawObject(
   pdf: PdfLibDocument,
   pdfPage: import('pdf-lib').PDFPage,
@@ -109,15 +155,43 @@ async function drawObject(
   switch (obj.type) {
     case 'text': {
       const font = pickFont(fonts, obj.fontFamily, obj.bold);
+      const textY = flipY(obj.y, obj.fontSize, pageHeight) - (obj.height - obj.fontSize); // align to top of box
       pdfPage.drawText(obj.text, {
         x: obj.x,
-        y: flipY(obj.y, obj.fontSize, pageHeight) - (obj.height - obj.fontSize), // align to top of box
+        y: textY,
         size: obj.fontSize,
         font,
         color: hexToRgb(obj.color),
         opacity: obj.opacity,
         rotate,
       });
+
+      if (obj.strikethrough) {
+        // pdf-lib has no built-in strikethrough — draw a line manually
+        // at roughly the text's visual midline (~30% up from the
+        // baseline works well across typical font metrics).
+        const textWidth = font.widthOfTextAtSize(obj.text, obj.fontSize);
+        const lineY = textY + obj.fontSize * 0.3;
+        pdfPage.drawLine({
+          start: { x: obj.x, y: lineY },
+          end: { x: obj.x + textWidth, y: lineY },
+          thickness: Math.max(1, obj.fontSize * 0.06),
+          color: hexToRgb(obj.color),
+          opacity: obj.opacity,
+        });
+      }
+
+      if (obj.link) {
+        // Clickable area covers the text box's full bounding rectangle,
+        // not just the rendered glyphs — simpler to compute and matches
+        // how most PDF tools size link hit-areas anyway.
+        addLinkAnnotation(pdfPage, obj.link, {
+          x: obj.x,
+          y: flipY(obj.y, obj.height, pageHeight),
+          width: obj.width,
+          height: obj.height,
+        });
+      }
       break;
     }
     case 'rect': {
@@ -126,7 +200,7 @@ async function drawObject(
         y: flipY(obj.y, obj.height, pageHeight),
         width: obj.width,
         height: obj.height,
-        color: hexToRgb(obj.fill),
+        ...(obj.fill ? { color: hexToRgb(obj.fill) } : {}),
         borderColor: hexToRgb(obj.stroke),
         borderWidth: obj.strokeWidth,
         opacity: obj.opacity,
@@ -140,7 +214,7 @@ async function drawObject(
         y: flipY(obj.y, obj.height, pageHeight) + obj.height / 2,
         xScale: obj.width / 2,
         yScale: obj.height / 2,
-        color: hexToRgb(obj.fill),
+        ...(obj.fill ? { color: hexToRgb(obj.fill) } : {}),
         borderColor: hexToRgb(obj.stroke),
         borderWidth: obj.strokeWidth,
         opacity: obj.opacity,
