@@ -1,32 +1,35 @@
-/* Design tokens, inspired by Google Sheets' visual language: clean white
-   surfaces, subtle gray hairline borders, a single blue accent, soft
-   hover states. Applied globally so every component (most of which are
-   still inline-styled) can progressively adopt these via className. */
+/* Rubik from Google Fonts — loaded here via @import so the font applies
+   everywhere without needing a separate <link> tag in index.html. */
+@import url('https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 
 :root {
-  --color-bg: #f8f9fa;
+  --color-bg: #f0f2f5;
   --color-surface: #ffffff;
-  --color-border: #e0e0e0;
-  --color-border-strong: #c4c7c5;
+  --color-border: #dadce0;
+  --color-border-strong: #bdc1c6;
+  --color-sidebar-border: #c4c7ce;
   --color-text: #202124;
   --color-text-secondary: #5f6368;
-  --color-text-muted: #80868b;
+  --color-text-muted: #9aa0a6;
   --color-accent: #1a73e8;
-  --color-accent-hover: #1765cc;
+  --color-accent-hover: #1558b0;
   --color-accent-bg: #e8f0fe;
+  --color-accent-bg-hover: #d2e3fc;
   --color-danger: #d93025;
   --color-danger-bg: #fce8e6;
   --color-success: #188038;
   --color-warning-bg: #fef7e0;
   --color-warning-text: #b06000;
 
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-pill: 20px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.14), 0 4px 8px rgba(0, 0, 0, 0.08);
+  --shadow-header: 0 2px 6px rgba(0, 0, 0, 0.08);
 
-  font-family: 'Google Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-family: 'Rubik', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
 * {
@@ -37,81 +40,97 @@ body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* ─── Base controls ─────────────────────────────────────── */
 
 button,
 select,
 input {
-  font-family: inherit;
+  font-family: var(--font-family);
   font-size: 13px;
 }
 
-/* Base button look shared across the app's many plain <button> elements.
-   Components can still override via inline style or className for
-   one-off cases (toggle "active" states, danger actions, etc). */
 button {
   appearance: none;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1.5px solid var(--color-border);
   border-radius: var(--radius-sm);
-  padding: 6px 12px;
+  padding: 6px 14px;
   color: var(--color-text);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+  white-space: nowrap;
 }
 
 button:hover:not(:disabled) {
   background: #f1f3f4;
   border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
 }
 
 button:active:not(:disabled) {
   background: #e8eaed;
+  box-shadow: none;
+  transform: translateY(1px);
 }
 
 button:disabled {
   cursor: default;
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 select,
 input[type='text'],
 input[type='number'] {
-  border: 1px solid var(--color-border);
+  border: 1.5px solid var(--color-border);
   border-radius: var(--radius-sm);
-  padding: 6px 8px;
+  padding: 6px 10px;
   background: var(--color-surface);
   color: var(--color-text);
+  font-weight: 400;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 select:focus,
 input:focus {
   outline: none;
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.18);
 }
 
-/* Utility classes — used where converting a whole component to its own
-   CSS module isn't worth it, but a few shared patterns recur often. */
+/* ─── App shell layout ──────────────────────────────────── */
 
 .app-header {
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1.5px solid var(--color-border);
+  box-shadow: var(--shadow-header);
+  position: relative;
+  z-index: 10;
 }
 
 .app-toolbar {
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-bottom: 1.5px solid var(--color-border);
 }
 
 .app-sidebar {
   background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
+  border-right: 2.5px solid var(--color-sidebar-border);
 }
 
 .app-canvas-area {
   background: var(--color-bg);
 }
+
+/* ─── Surface and popover cards ─────────────────────────── */
 
 .surface-card {
   background: var(--color-surface);
@@ -121,32 +140,43 @@ input:focus {
 
 .popover {
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1.5px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
 }
+
+/* ─── Accent / action buttons ───────────────────────────── */
 
 .btn-accent {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: #ffffff;
+  border-radius: var(--radius-pill);
+  padding: 7px 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .btn-accent:hover:not(:disabled) {
   background: var(--color-accent-hover);
   border-color: var(--color-accent-hover);
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.35);
 }
 
 .btn-danger-text {
   color: var(--color-danger);
 }
 
+/* ─── Badges ─────────────────────────────────────────────── */
+
 .badge {
   display: inline-flex;
   align-items: center;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.02em;
 }
 
 .badge-warning {
@@ -159,8 +189,14 @@ input:focus {
   color: var(--color-success);
 }
 
+/* ─── Active tool state ──────────────────────────────────── */
+
 .tool-active {
   background: var(--color-accent-bg) !important;
   border-color: var(--color-accent) !important;
-  color: var(--color-accent-hover);
+  color: var(--color-accent-hover) !important;
+}
+
+.tool-active:hover:not(:disabled) {
+  background: var(--color-accent-bg-hover) !important;
 }

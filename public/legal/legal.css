@@ -1,7 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600&display=swap');
+
 :root {
-  --color-bg: #f8f9fa;
+  --color-bg: #f0f2f5;
   --color-surface: #ffffff;
-  --color-border: #e0e0e0;
+  --color-border: #dadce0;
   --color-text: #202124;
   --color-text-secondary: #5f6368;
   --color-accent: #1a73e8;
@@ -15,8 +17,9 @@ body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: 'Google Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Rubik', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 .page {
