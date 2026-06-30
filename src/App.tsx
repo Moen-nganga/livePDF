@@ -6,6 +6,8 @@ import { api } from './lib/api';
 import { Toolbar } from './components/Toolbar';
 import { EditableTitle } from './components/EditableTitle';
 import { FileMenu } from './components/FileMenu';
+import { EditMenu } from './components/EditMenu';
+import { HelpMenu } from './components/HelpMenu';
 import { PdfCanvas } from './components/PdfCanvas';
 import { PageNav } from './components/PageNav';
 import { UploadButton } from './components/UploadButton';
@@ -123,6 +125,8 @@ export default function App() {
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {isOwner && <FileMenu />}
+          {!isReadOnly && <EditMenu />}
+          <HelpMenu />
           <EditableTitle />
           {isReadOnly && <span className="badge badge-warning">View only</span>}
           {shareSession?.access === 'edit' && (
