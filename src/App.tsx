@@ -113,30 +113,24 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header
+        className="app-header"
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '8px 16px',
-          borderBottom: '1px solid #ddd',
+          padding: '10px 16px',
         }}
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {isOwner && <FileMenu />}
           <EditableTitle />
-          {isReadOnly && (
-            <span style={{ fontSize: 12, color: '#996600', background: '#fff3cc', padding: '2px 8px', borderRadius: 4 }}>
-              View only
-            </span>
-          )}
+          {isReadOnly && <span className="badge badge-warning">View only</span>}
           {shareSession?.access === 'edit' && (
-            <span style={{ fontSize: 12, color: '#1a6b3c', background: '#e3f6ea', padding: '2px 8px', borderRadius: 4 }}>
-              Editing via shared link
-            </span>
+            <span className="badge badge-success">Editing via shared link</span>
           )}
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: '#666' }}>
+          <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
             {isReadOnly
               ? ''
               : online
@@ -144,7 +138,9 @@ export default function App() {
                 : 'Offline — viewing only, edits will not be saved'}
           </span>
           {isOwner && <UploadButton />}
-          <button onClick={() => setDownloadDialogOpen(true)}>Download PDF</button>
+          <button className="btn-accent" onClick={() => setDownloadDialogOpen(true)}>
+            Download PDF
+          </button>
         </div>
       </header>
 
@@ -157,10 +153,10 @@ export default function App() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {isOwner && <PageNav />}
         <main
+          className="app-canvas-area"
           style={{
             flex: 1,
             overflow: 'auto',
-            background: '#f3f3f3',
             display: 'flex',
             justifyContent: 'center',
             padding: 24,

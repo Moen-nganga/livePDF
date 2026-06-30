@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
 import * as fabric from 'fabric';
 import { useEditorStore } from '../store/editorStore';
-import type { PageObject, TextObject } from '../types/document';
+import type { PageObject, TextObject, RectObject } from '../types/document';
 import { WEB_SAFE_FONTS, FONT_SIZES } from '../lib/fonts';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
@@ -27,10 +27,47 @@ export function Toolbar() {
   const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);
   const selectedText: TextObject | undefined =
     selectedObject?.type === 'text' ? selectedObject : undefined;
+  // A "border" is a rect with no fill — same object type as a regular
+  // rectangle, just styled differently. See addBorder below.
+  const selectedBorder: RectObject | undefined =
+    selectedObject?.type === 'rect' && !selectedObject.fill ? selectedObject : undefined;
+
+  // Drives which +Text/+Rectangle/etc button is highlighted, based on
+  // what's currently selected on the canvas — not which button was last
+  // clicked. Selecting nothing (or an object type with no matching
+  // toolbar button, like 'line') means no add-button is highlighted.
+  type ToolKind = 'text' | 'rect' | 'border' | 'ellipse' | 'image' | null;
+  const activeTool: ToolKind = (() => {
+    if (!selectedObject) return null;
+    switch (selectedObject.type) {
+      case 'text':
+        return 'text';
+      case 'rect':
+        return selectedBorder ? 'border' : 'rect';
+      case 'ellipse':
+        return 'ellipse';
+      case 'image':
+        return 'image';
+      default:
+        return null;
+    }
+  })();
+
+  // Defaults applied to the NEXT border created via "+ Border" — separate
+  // from selectedBorder, which edits an already-placed one. Persists for
+  // the rest of the session so picking a thickness/color once sticks for
+  // subsequent borders too, similar to how most design tools remember the
+  // last-used style per tool.
+  const [borderDefaults, setBorderDefaults] = useState({ strokeWidth: 2, stroke: '#222222' });
 
   function updateSelectedText(patch: Partial<TextObject>) {
     if (!activePage || !selectedText) return;
     updateObject(activePage.id, selectedText.id, patch);
+  }
+
+  function updateSelectedBorder(patch: Partial<RectObject>) {
+    if (!activePage || !selectedBorder) return;
+    updateObject(activePage.id, selectedBorder.id, patch);
   }
 
   function rotateSelected() {
@@ -95,8 +132,8 @@ export function Toolbar() {
       height: 160,
       ...baseDefaults,
       fill: undefined, // outline only — no fill means nothing underneath is covered
-      stroke: '#222222',
-      strokeWidth: 2,
+      stroke: borderDefaults.stroke,
+      strokeWidth: borderDefaults.strokeWidth,
       cornerRadius: 0,
     };
     addObject(activePage.id, obj);
@@ -152,21 +189,56 @@ export function Toolbar() {
     e.target.value = ''; // allow picking the same file again later
   }
 
+  function activeToolStyle(tool: NonNullable<typeof activeTool>): React.CSSProperties {
+    return activeTool === tool
+      ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
+      : {};
+  }
+
   return (
     <div
+      className="app-toolbar"
       style={{
         display: 'flex',
         gap: 8,
         padding: '8px 16px',
-        borderBottom: '1px solid #ddd',
-        background: '#fafafa',
+        alignItems: 'center',
+        flexWrap: 'wrap',
       }}
     >
-      <button onClick={addText}>+ Text</button>
-      <button onClick={addRect}>+ Rectangle</button>
-      <button onClick={addEllipse}>+ Ellipse</button>
-      <button onClick={addBorder} title="Add a resizable outline to frame any content">+ Border</button>
-      <button onClick={() => fileInputRef.current?.click()}>+ Image</button>
+      <button onClick={addText} style={activeToolStyle('text')}>
+        + Text
+      </button>
+      <button onClick={addRect} style={activeToolStyle('rect')}>
+        + Rectangle
+      </button>
+      <button onClick={addEllipse} style={activeToolStyle('ellipse')}>
+        + Ellipse
+      </button>
+      <button
+        onClick={addBorder}
+        title="Add a resizable outline to frame any content"
+        style={activeToolStyle('border')}
+      >
+        + Border
+      </button>
+      <BorderThicknessPicker
+        value={selectedBorder ? selectedBorder.strokeWidth : borderDefaults.strokeWidth}
+        onChange={(strokeWidth) => {
+          setBorderDefaults((d) => ({ ...d, strokeWidth }));
+          if (selectedBorder) updateSelectedBorder({ strokeWidth });
+        }}
+      />
+      <BorderColorPicker
+        value={selectedBorder ? selectedBorder.stroke : borderDefaults.stroke}
+        onChange={(stroke) => {
+          setBorderDefaults((d) => ({ ...d, stroke }));
+          if (selectedBorder) updateSelectedBorder({ stroke });
+        }}
+      />
+      <button onClick={() => fileInputRef.current?.click()} style={activeToolStyle('image')}>
+        + Image
+      </button>
 
       <Divider />
 
@@ -276,8 +348,8 @@ function ToggleButton({
       title={title}
       style={{
         width: 28,
-        background: active ? '#cce5ff' : '#fff',
-        border: active ? '1px solid #3380cc' : '1px solid #ccc',
+        background: active ? 'var(--color-accent-bg)' : 'var(--color-surface)',
+        border: active ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
         ...style,
       }}
     >
@@ -373,7 +445,7 @@ function ColorPicker({
                 width: 22,
                 height: 22,
                 background: color,
-                border: color === value ? '2px solid #3380cc' : '1px solid #ddd',
+                border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
                 borderRadius: 4,
                 padding: 0,
               }}
@@ -433,8 +505,8 @@ function LinkButton({
         title={value ? `Linked to ${value}` : 'Insert link'}
         style={{
           width: 28,
-          background: value ? '#cce5ff' : '#fff',
-          border: value ? '1px solid #3380cc' : '1px solid #ccc',
+          background: value ? 'var(--color-accent-bg)' : 'var(--color-surface)',
+          border: value ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
         }}
       >
         🔗
@@ -490,8 +562,164 @@ function LinkButton({
   );
 }
 
+const BORDER_THICKNESSES = [1, 2, 4, 6, 10];
+
+function BorderThicknessPicker({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (thickness: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title="Border thickness"
+        style={{ width: 28 }}
+      >
+        ▾
+      </button>
+
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 6,
+            width: 140,
+          }}
+        >
+          {BORDER_THICKNESSES.map((thickness) => (
+            <button
+              key={thickness}
+              onClick={() => {
+                onChange(thickness);
+                setOpen(false);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                width: '100%',
+                padding: '6px 8px',
+                border: thickness === value ? '1px solid var(--color-accent)' : '1px solid transparent',
+                background: thickness === value ? '#eef6ff' : 'transparent',
+                borderRadius: 4,
+              }}
+            >
+              <div style={{ flex: 1, height: thickness, background: '#222' }} />
+              <span style={{ fontSize: 11, color: '#888' }}>{thickness}px</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BorderColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title="Border color"
+        style={{ width: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2px 0' }}
+      >
+        <span
+          style={{
+            width: 16,
+            height: 16,
+            border: '1px solid #888',
+            background: value,
+            borderRadius: 2,
+          }}
+        />
+      </button>
+
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 8,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 6,
+          }}
+        >
+          {COLOR_SWATCHES.map((color) => (
+            <button
+              key={color}
+              title={color}
+              onClick={() => {
+                onChange(color);
+                setOpen(false);
+              }}
+              style={{
+                width: 22,
+                height: 22,
+                background: color,
+                border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                borderRadius: 4,
+                padding: 0,
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Divider() {
-  return <div style={{ width: 1, background: '#ddd', margin: '2px 4px' }} />;
+  return <div style={{ width: 1, background: 'var(--color-border)', margin: '2px 4px' }} />;
 }
 
 interface FontSizeStepperProps {

@@ -285,6 +285,34 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rotationFingerprint]);
 
+  // Sync STROKE/STROKE WIDTH for rect and ellipse objects (this is what
+  // the border thickness/color pickers edit — a border is just a rect
+  // with no fill, see Toolbar.tsx's addBorder). Same narrow-fingerprint
+  // pattern as the effects above, so editing a border's style doesn't
+  // interfere with dragging or resizing it.
+  const shapeStyleFingerprint = page.objects
+    .filter((o) => o.type === 'rect' || o.type === 'ellipse')
+    .map((o) => `${o.id}:${o.stroke}:${o.strokeWidth}`)
+    .join(',');
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+
+    page.objects.forEach((obj) => {
+      if (obj.type !== 'rect' && obj.type !== 'ellipse') return;
+      const fabricObj = canvas
+        .getObjects()
+        .find((o) => (o as fabric.Object & { id?: string }).id === obj.id);
+      if (!fabricObj) return;
+      if (fabricObj.stroke !== obj.stroke || fabricObj.strokeWidth !== obj.strokeWidth) {
+        fabricObj.set({ stroke: obj.stroke, strokeWidth: obj.strokeWidth });
+      }
+    });
+
+    canvas.requestRenderAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shapeStyleFingerprint]);
+
   // Delete the selected object with Delete/Backspace, since there's no
   // dedicated delete button yet. Fabric's own keyboard handling only
   // covers text editing, not object deletion, so we add this ourselves.

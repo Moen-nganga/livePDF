@@ -1,0 +1,166 @@
+/* Design tokens, inspired by Google Sheets' visual language: clean white
+   surfaces, subtle gray hairline borders, a single blue accent, soft
+   hover states. Applied globally so every component (most of which are
+   still inline-styled) can progressively adopt these via className. */
+
+:root {
+  --color-bg: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-border: #e0e0e0;
+  --color-border-strong: #c4c7c5;
+  --color-text: #202124;
+  --color-text-secondary: #5f6368;
+  --color-text-muted: #80868b;
+  --color-accent: #1a73e8;
+  --color-accent-hover: #1765cc;
+  --color-accent-bg: #e8f0fe;
+  --color-danger: #d93025;
+  --color-danger-bg: #fce8e6;
+  --color-success: #188038;
+  --color-warning-bg: #fef7e0;
+  --color-warning-text: #b06000;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
+
+  font-family: 'Google Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+button,
+select,
+input {
+  font-family: inherit;
+  font-size: 13px;
+}
+
+/* Base button look shared across the app's many plain <button> elements.
+   Components can still override via inline style or className for
+   one-off cases (toggle "active" states, danger actions, etc). */
+button {
+  appearance: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+button:hover:not(:disabled) {
+  background: #f1f3f4;
+  border-color: var(--color-border-strong);
+}
+
+button:active:not(:disabled) {
+  background: #e8eaed;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+select,
+input[type='text'],
+input[type='number'] {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+select:focus,
+input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* Utility classes — used where converting a whole component to its own
+   CSS module isn't worth it, but a few shared patterns recur often. */
+
+.app-header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-toolbar {
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-sidebar {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+}
+
+.app-canvas-area {
+  background: var(--color-bg);
+}
+
+.surface-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.popover {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-accent {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+.btn-accent:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.btn-danger-text {
+  color: var(--color-danger);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.badge-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.badge-success {
+  background: #e6f4ea;
+  color: var(--color-success);
+}
+
+.tool-active {
+  background: var(--color-accent-bg) !important;
+  border-color: var(--color-accent) !important;
+  color: var(--color-accent-hover);
+}

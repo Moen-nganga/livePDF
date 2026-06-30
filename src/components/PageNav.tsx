@@ -66,15 +66,14 @@ export function PageNav() {
 
   return (
     <aside
+      className="app-sidebar"
       style={{
-        width: 140,
-        borderRight: '1px solid #ddd',
+        width: 152,
         padding: 12,
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
         overflowY: 'auto',
-        background: '#fafafa',
         position: 'relative',
       }}
     >
@@ -94,7 +93,7 @@ export function PageNav() {
                 width: '100%',
                 padding: 8,
                 fontSize: 12,
-                border: '2px solid #3380cc',
+                border: '2px solid var(--color-accent)',
                 boxSizing: 'border-box',
               }}
             />
@@ -109,7 +108,7 @@ export function PageNav() {
               onDoubleClick={() => startRename(page, i)}
               style={{
                 width: '100%',
-                border: i === activePageIndex ? '2px solid #3380cc' : '1px solid #ccc',
+                border: i === activePageIndex ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
                 background: '#fff',
                 padding: 8,
                 fontSize: 12,

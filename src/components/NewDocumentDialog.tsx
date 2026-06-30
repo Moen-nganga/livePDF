@@ -38,13 +38,11 @@ export function NewDocumentDialog({ onClose }: Props) {
       }}
     >
       <div
+        className="surface-card"
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#fff',
-          borderRadius: 8,
           padding: 24,
           width: 380,
-          boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -37,7 +37,7 @@ export function EditableTitle() {
         style={{
           fontWeight: 'bold',
           fontSize: 16,
-          border: '1px solid #3380cc',
+          border: '1px solid var(--color-accent)',
           borderRadius: 3,
           padding: '2px 6px',
           minWidth: 200,
