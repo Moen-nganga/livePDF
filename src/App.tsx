@@ -12,6 +12,7 @@ import { PdfCanvas } from './components/PdfCanvas';
 import { PageNav } from './components/PageNav';
 import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
+import { LandingScreen } from './components/LandingScreen';
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -36,6 +37,10 @@ export default function App() {
   const shareSession = useEditorStore((s) => s.shareSession);
   const setShareSession = useEditorStore((s) => s.setShareSession);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  // Show the landing screen on every fresh load, unless the URL contains a
+  // share token (in which case go straight into the shared document).
+  const shareToken = new URLSearchParams(window.location.search).get('share');
+  const [showLanding, setShowLanding] = useState(!shareToken);
   const online = useOnlineStatus();
   const saveStatus = useAutoSave();
 
@@ -52,49 +57,21 @@ export default function App() {
     }
   }, []);
 
-  // On first load: check for a share link first (?share=token in the URL).
-  // If present, this browser is a visitor, not the owner — load via the
-  // token instead of the normal "resume my most recent document" flow,
-  // and skip the offline-cache fallback, since a shared doc isn't this
-  // device's own content to remember between sessions.
+  // On first load: if a share token is present in the URL, resolve it and
+  // skip the landing screen entirely. Otherwise the landing screen handles
+  // document selection and no auto-loading is needed here.
   useEffect(() => {
+    if (!shareToken) return; // landing screen will handle document selection
     if (document) return;
-    const shareToken = new URLSearchParams(window.location.search).get('share');
 
     (async () => {
-      if (shareToken) {
-        try {
-          const { document: shared, access } = await api.getSharedDocument(shareToken);
-          setShareSession({ token: shareToken, access });
-          loadDocument(shared);
-          return;
-        } catch (err) {
-          alert(err instanceof Error ? err.message : 'This share link could not be opened.');
-          // Fall through to the normal flow below so the visitor isn't
-          // stuck on a dead end if the link is bad/revoked.
-        }
+      try {
+        const { document: shared, access } = await api.getSharedDocument(shareToken);
+        setShareSession({ token: shareToken, access });
+        loadDocument(shared);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'This share link could not be opened.');
       }
-
-      if (navigator.onLine) {
-        try {
-          const docs = await api.listDocuments();
-          if (docs.length > 0) {
-            const full = await api.getDocument(docs[0].id);
-            loadDocument(full);
-            cacheDocumentForOffline(full);
-            return;
-          }
-        } catch {
-          // backend unreachable even though navigator says online; fall through
-        }
-      } else {
-        const cached = await listMostRecentCached();
-        if (cached) {
-          loadDocument(cached);
-          return;
-        }
-      }
-      createBlankDocument('A4');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -104,6 +81,13 @@ export default function App() {
   useEffect(() => {
     if (document) cacheDocumentForOffline(document);
   }, [document]);
+
+  // Show landing screen on fresh loads (not share links) — must come before
+  // the document null-check below, since no document is loaded yet at this
+  // point (the user will pick one from the landing screen).
+  if (showLanding) {
+    return <LandingScreen onEnter={() => setShowLanding(false)} />;
+  }
 
   if (!document) {
     return <div style={{ padding: 24 }}>Loading…</div>;
