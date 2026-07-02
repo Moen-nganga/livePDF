@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
-import * as fabric from 'fabric';
 import { useEditorStore } from '../store/editorStore';
 import type { PageObject, TextObject, RectObject } from '../types/document';
 import { WEB_SAFE_FONTS, FONT_SIZES } from '../lib/fonts';
+import { useImageAdd } from '../hooks/useImageAdd.tsx';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
@@ -21,7 +21,7 @@ export function Toolbar() {
   const addObject = useEditorStore((s) => s.addObject);
   const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
   const updateObject = useEditorStore((s) => s.updateObject);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { triggerImagePick, fileInputElement } = useImageAdd();
 
   const activePage = document?.pages[activePageIndex];
   const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);
@@ -157,38 +157,6 @@ export function Toolbar() {
     addObject(activePage.id, obj);
   }
 
-  function handleImagePick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !activePage) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      // Read natural size so the placed object starts at a sane aspect ratio
-      fabric.FabricImage.fromURL(dataUrl).then((img) => {
-        const maxDim = 300;
-        const naturalW = img.width ?? maxDim;
-        const naturalH = img.height ?? maxDim;
-        const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
-
-        const { x, y } = nextOffset(activePage.objects.length);
-        const obj: PageObject = {
-          id: nanoid(),
-          type: 'image',
-          x,
-          y,
-          width: naturalW * scale,
-          height: naturalH * scale,
-          ...baseDefaults,
-          src: dataUrl,
-        };
-        addObject(activePage.id, obj);
-      });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = ''; // allow picking the same file again later
-  }
-
   function activeToolStyle(tool: NonNullable<typeof activeTool>): React.CSSProperties {
     return activeTool === tool
       ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
@@ -236,7 +204,7 @@ export function Toolbar() {
           if (selectedBorder) updateSelectedBorder({ stroke });
         }}
       />
-      <button onClick={() => fileInputRef.current?.click()} style={activeToolStyle('image')}>
+      <button onClick={triggerImagePick} style={activeToolStyle('image')}>
         + Image
       </button>
 
@@ -315,13 +283,7 @@ export function Toolbar() {
       <span style={{ fontSize: 12, color: '#888', alignSelf: 'center', marginLeft: 8 }}>
         Double-click text to edit it · select an object and press Delete to remove it
       </span>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        style={{ display: 'none' }}
-        onChange={handleImagePick}
-      />
+      {fileInputElement}
     </div>
   );
 }

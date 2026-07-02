@@ -1,12 +1,11 @@
-# PDF Editor
+## livePDF
 
-Browser-based PDF creation and editing — blank canvas or upload-and-annotate,
-no accounts required. Works like Google Sheets: open the site, start
-editing, it auto-saves. Offline = view only, editing needs a connection
-to persist (it still works locally in memory while offline, it just won't
-save until back online).
+PDF creation and editing tool that runs completely on your browser.
+Works in the same way as Google Sheets does, all you have to do is start a new blank page, 
+edit it, then proceed to save and download it on your computer. 
+It containes features such as auto-saves and an offline = view only mode. 
 
-## Stack
+## Tech stack
 
 - Frontend: React + TypeScript + Vite, Fabric.js (canvas editing),
   pdf.js (render uploaded PDFs), pdf-lib (export to real PDF), Zustand

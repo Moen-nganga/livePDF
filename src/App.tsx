@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from './store/editorStore';
 import { useAutoSave } from './hooks/useAutoSave';
-import { cacheDocumentForOffline, listCachedDocuments } from './lib/offlineCache';
+import { cacheDocumentForOffline } from './lib/offlineCache';
 import { api } from './lib/api';
 import { Toolbar } from './components/Toolbar';
 import { EditableTitle } from './components/EditableTitle';
 import { FileMenu } from './components/FileMenu';
 import { EditMenu } from './components/EditMenu';
+import { AddMenu } from './components/AddMenu';
 import { HelpMenu } from './components/HelpMenu';
 import { PdfCanvas } from './components/PdfCanvas';
 import { PageNav } from './components/PageNav';
@@ -32,7 +33,6 @@ function useOnlineStatus() {
 export default function App() {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
-  const createBlankDocument = useEditorStore((s) => s.createBlankDocument);
   const loadDocument = useEditorStore((s) => s.loadDocument);
   const shareSession = useEditorStore((s) => s.shareSession);
   const setShareSession = useEditorStore((s) => s.setShareSession);
@@ -110,6 +110,7 @@ export default function App() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {isOwner && <FileMenu />}
           {!isReadOnly && <EditMenu />}
+          {!isReadOnly && <AddMenu />}
           <HelpMenu />
           <EditableTitle />
           {isReadOnly && <span className="badge badge-warning">View only</span>}
@@ -170,10 +171,4 @@ function saveStatusLabel(status: string): string {
     default:
       return '';
   }
-}
-
-async function listMostRecentCached() {
-  const all = await listCachedDocuments();
-  if (all.length === 0) return undefined;
-  return all.sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }

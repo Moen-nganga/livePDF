@@ -267,7 +267,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'resume',
     label: 'Resume / CV',
-    description: 'Professional one-page resume',
+    description: 'One-page resume',
     color: '#e8f0fe',
     icon: '👤',
     buildPages: () => [resumePage()],
@@ -275,7 +275,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'invoice',
     label: 'Invoice',
-    description: 'Clean client invoice with line items',
+    description: 'Clean client invoice',
     color: '#e6f4ea',
     icon: '🧾',
     buildPages: () => [invoicePage()],
@@ -283,7 +283,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'letter',
     label: 'Letter',
-    description: 'Formal business or personal letter',
+    description: 'Business or personal',
     color: '#fce8e6',
     icon: '✉️',
     buildPages: () => [letterPage()],
@@ -291,7 +291,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'meeting',
     label: 'Meeting notes',
-    description: 'Structured agenda and action items',
+    description: 'Agendas and notes',
     color: '#fef7e0',
     icon: '📋',
     buildPages: () => [meetingNotesPage()],
@@ -299,7 +299,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'report',
     label: 'Report cover page',
-    description: 'Polished cover for any report',
+    description: 'Polished cover for reports',
     color: '#e8f0fe',
     icon: '📊',
     buildPages: () => [reportCoverPage()],
@@ -307,7 +307,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'certificate',
     label: 'Certificate',
-    description: 'Achievement or completion certificate',
+    description: 'Achievement certificates',
     color: '#fef7e0',
     icon: '🏆',
     buildPages: () => [certificatePage()],

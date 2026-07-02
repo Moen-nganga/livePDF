@@ -46,6 +46,7 @@ interface EditorState {
 
   // Objects
   addObject: (pageId: string, object: PageObject) => void;
+  addObjects: (pageId: string, objects: PageObject[]) => void;
   updateObject: (pageId: string, objectId: string, patch: Partial<PageObject>) => void;
   removeObject: (pageId: string, objectId: string) => void;
   setSelectedObjectId: (id: string | null) => void;
@@ -251,6 +252,24 @@ export const useEditorStore = create<EditorState>((set, get) => {
             ...state.document,
             pages: state.document.pages.map((p) =>
               p.id === pageId ? { ...p, objects: [...p.objects, object] } : p
+            ),
+            updatedAt: Date.now(),
+          },
+        };
+      })
+    ),
+
+    // Adds multiple objects in a single history step — used by tables and
+    // any other feature that places several objects atomically, so the
+    // entire operation undoes in one Ctrl+Z rather than once per object.
+    addObjects: withHistory((pageId: string, objects: PageObject[]) =>
+      set((state) => {
+        if (!state.document) return state;
+        return {
+          document: {
+            ...state.document,
+            pages: state.document.pages.map((p) =>
+              p.id === pageId ? { ...p, objects: [...p.objects, ...objects] } : p
             ),
             updatedAt: Date.now(),
           },
