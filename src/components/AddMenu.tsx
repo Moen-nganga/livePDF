@@ -4,8 +4,6 @@ import { useEditorStore } from '../store/editorStore';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 import type { PageObject } from '../types/document';
 
-const baseDefaults = { rotation: 0, opacity: 1 };
-
 export function AddMenu() {
   const [open, setOpen] = useState(false);
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
@@ -128,7 +126,7 @@ function TableDialog({ onClose }: { onClose: () => void }) {
 
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
-  const addObjects = useEditorStore((s) => s.addObjects);
+  const addObject = useEditorStore((s) => s.addObject);
 
   const activePage = document?.pages[activePageIndex];
 
@@ -142,8 +140,70 @@ function TableDialog({ onClose }: { onClose: () => void }) {
     const err = validate(rows, cols);
     if (err) { setError(err); return; }
     if (!activePage) return;
-    const objects = buildTable({ rows, cols, hasHeader, pageWidth: activePage.width });
-    addObjects(activePage.id, objects);
+
+    // Render the table onto an offscreen HTML canvas, then store it as a
+    // single ImageObject. This makes the whole table draggable/resizable
+    // as one unit — exactly like any other image on the page — with no
+    // new object types or canvas sync logic needed.
+    const SCALE = 2; // render at 2x for crispness
+    const margin = 60;
+    const tableWidth = Math.min(activePage.width - margin * 2, 400);
+    const cellWidth = tableWidth / cols;
+    const headerHeight = 36;
+    const bodyHeight = 32;
+    const totalHeight = hasHeader
+      ? headerHeight + (rows - 1) * bodyHeight
+      : rows * bodyHeight;
+
+    const canvas = window.document.createElement('canvas');
+    canvas.width = tableWidth * SCALE;
+    canvas.height = totalHeight * SCALE;
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(SCALE, SCALE);
+
+    for (let r = 0; r < rows; r++) {
+      const isHeader = hasHeader && r === 0;
+      const rowH = isHeader ? headerHeight : bodyHeight;
+      const rowY = isHeader ? 0 : headerHeight + (r - 1) * bodyHeight;
+      const localY = hasHeader ? rowY : r * bodyHeight;
+
+      for (let c = 0; c < cols; c++) {
+        const cellX = c * cellWidth;
+
+        // Cell background
+        ctx.fillStyle = isHeader ? '#1a73e8' : (r % 2 === 0 ? '#ffffff' : '#f8f9fa');
+        ctx.fillRect(cellX, localY, cellWidth, rowH);
+
+        // Cell border
+        ctx.strokeStyle = '#c4c7c5';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cellX + 0.5, localY + 0.5, cellWidth - 1, rowH - 1);
+
+        // Header label
+        if (isHeader) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `bold 11px Helvetica, Arial, sans-serif`;
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`Column ${c + 1}`, cellX + 7, localY + rowH / 2);
+        }
+      }
+    }
+
+    const dataUrl = canvas.toDataURL('image/png');
+
+    const obj: PageObject = {
+      id: nanoid(),
+      type: 'image',
+      x: margin,
+      y: 80,
+      width: tableWidth,
+      height: totalHeight,
+      rotation: 0,
+      opacity: 1,
+      src: dataUrl,
+    };
+
+    addObject(activePage.id, obj);
     onClose();
   }
 
@@ -246,84 +306,5 @@ function TableDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-/**
- * Generates a flat list of PageObjects representing a table:
- * - One RectObject per cell (the cell border/background)
- * - One TextObject per cell with a placeholder label
- *
- * The table is placed near the top-left of the page, sized to fit
- * comfortably within the page width with a small margin.
- */
-function buildTable({
-  rows,
-  cols,
-  hasHeader,
-  pageWidth,
-}: {
-  rows: number;
-  cols: number;
-  hasHeader: boolean;
-  pageWidth: number;
-}): PageObject[] {
-  const margin = 60;
-  const tableWidth = Math.min(pageWidth - margin * 2, 400);
-  const cellWidth = tableWidth / cols;
-  const cellHeight = hasHeader ? undefined : 32; // header row is taller
-  const headerHeight = 36;
-  const bodyHeight = 32;
-
-  const startX = margin;
-  const startY = 80;
-
-  const objects: PageObject[] = [];
-
-  for (let r = 0; r < rows; r++) {
-    const isHeader = hasHeader && r === 0;
-    const rowHeight = isHeader ? headerHeight : bodyHeight;
-    const rowY = startY + (hasHeader
-      ? (r === 0 ? 0 : headerHeight + (r - 1) * bodyHeight)
-      : r * (cellHeight ?? bodyHeight));
-
-    for (let c = 0; c < cols; c++) {
-      const cellX = startX + c * cellWidth;
-
-      // Cell background rect
-      objects.push({
-        id: nanoid(),
-        type: 'rect',
-        x: cellX,
-        y: rowY,
-        width: cellWidth,
-        height: rowHeight,
-        rotation: 0,
-        opacity: 1,
-        fill: isHeader ? '#1a73e8' : (r % 2 === 0 ? '#ffffff' : '#f8f9fa'),
-        stroke: '#c4c7c5',
-        strokeWidth: 1,
-        cornerRadius: 0,
-      });
-
-      // Cell label text
-      objects.push({
-        id: nanoid(),
-        type: 'text',
-        x: cellX + 6,
-        y: rowY + (rowHeight - 14) / 2,
-        width: cellWidth - 12,
-        height: rowHeight,
-        rotation: 0,
-        opacity: 1,
-        text: isHeader ? `Column ${c + 1}` : '',
-        fontSize: isHeader ? 11 : 11,
-        fontFamily: 'Helvetica',
-        color: isHeader ? '#ffffff' : '#202124',
-        bold: isHeader,
-        italic: false,
-        strikethrough: false,
-        align: 'left',
-      });
-    }
-  }
-
-  return objects;
-}
+// No buildTable function needed — table rendering is done inline in
+// TableDialog.handleInsert via an offscreen HTML canvas.
