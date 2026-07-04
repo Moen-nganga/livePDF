@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
-import type { PDFDocument, Page, PageObject, PageSizeName } from '../types/document';
+import type { PDFDocument, Page, PageObject, PageSizeName, Comment } from '../types/document';
 import { PAGE_SIZES } from '../types/document';
 
 interface EditorState {
@@ -18,6 +18,34 @@ interface EditorState {
   // the store is the shared channel between them.
   isRenamingTitle: boolean;
   setIsRenamingTitle: (value: boolean) => void;
+
+  // Whether the page sidebar (PageNav) is hidden. Transient view state,
+  // same category as isRenamingTitle: it shouldn't be undoable, and it
+  // isn't reset by loadDocument/createBlankDocument/copyDocument — a user
+  // who collapsed the sidebar almost certainly wants it to stay collapsed
+  // after switching documents, not spring back open.
+  isPageNavCollapsed: boolean;
+  setIsPageNavCollapsed: (value: boolean) => void;
+
+  // Whether the ruler is shown around the canvas. Same category as
+  // isPageNavCollapsed: transient view state, not undoable, not reset
+  // across document switches.
+  showRuler: boolean;
+  setShowRuler: (value: boolean) => void;
+
+  // Whether the comments panel is shown. Transient view state, same
+  // treatment as showRuler/isPageNavCollapsed.
+  showComments: boolean;
+  setShowComments: (value: boolean) => void;
+
+  // Comments
+  // These DO go through withHistory (see below) — unlike the view-state
+  // flags above, comments are actual document content that gets saved to
+  // the backend via the existing whole-document PUT, so add/resolve/delete
+  // should be undoable the same way editing an object is.
+  addComment: (pageId: string, text: string, objectId?: string) => void;
+  resolveComment: (commentId: string, resolved: boolean) => void;
+  deleteComment: (commentId: string) => void;
 
   // Undo/Redo history. Snapshots the whole document before each mutating
   // action (see withHistory below) rather than tracking per-field diffs —
@@ -96,6 +124,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
     setShareSession: (session) => set({ shareSession: session }),
     isRenamingTitle: false,
     setIsRenamingTitle: (value) => set({ isRenamingTitle: value }),
+    isPageNavCollapsed: false,
+    setIsPageNavCollapsed: (value) => set({ isPageNavCollapsed: value }),
+    showRuler: false,
+    setShowRuler: (value) => set({ showRuler: value }),
+    showComments: false,
+    setShowComments: (value) => set({ showComments: value }),
     history: { past: [], future: [] },
 
     undo: () => {
@@ -350,5 +384,58 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
 
     setSelectedObjectId: (id) => set({ selectedObjectId: id }),
+
+    addComment: withHistory((pageId: string, text: string, objectId?: string) =>
+      set((state) => {
+        if (!state.document) return state;
+        const trimmed = text.trim();
+        if (!trimmed) return state; // never store a blank comment
+
+        const comment: Comment = {
+          id: nanoid(),
+          pageId,
+          objectId,
+          text: trimmed,
+          createdAt: Date.now(),
+          resolved: false,
+        };
+
+        return {
+          document: {
+            ...state.document,
+            comments: [...(state.document.comments ?? []), comment],
+            updatedAt: Date.now(),
+          },
+        };
+      })
+    ),
+
+    resolveComment: withHistory((commentId: string, resolved: boolean) =>
+      set((state) => {
+        if (!state.document) return state;
+        return {
+          document: {
+            ...state.document,
+            comments: (state.document.comments ?? []).map((c) =>
+              c.id === commentId ? { ...c, resolved } : c
+            ),
+            updatedAt: Date.now(),
+          },
+        };
+      })
+    ),
+
+    deleteComment: withHistory((commentId: string) =>
+      set((state) => {
+        if (!state.document) return state;
+        return {
+          document: {
+            ...state.document,
+            comments: (state.document.comments ?? []).filter((c) => c.id !== commentId),
+            updatedAt: Date.now(),
+          },
+        };
+      })
+    ),
   };
 });

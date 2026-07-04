@@ -7,10 +7,13 @@ import { Toolbar } from './components/Toolbar';
 import { EditableTitle } from './components/EditableTitle';
 import { FileMenu } from './components/FileMenu';
 import { EditMenu } from './components/EditMenu';
+import { ViewMenu } from './components/ViewMenu';
 import { AddMenu } from './components/AddMenu';
 import { HelpMenu } from './components/HelpMenu';
-import { PdfCanvas } from './components/PdfCanvas';
+import { PdfCanvas, ZOOM } from './components/PdfCanvas';
+import { Ruler, RULER_THICKNESS } from './components/Ruler';
 import { PageNav } from './components/PageNav';
+import { CommentsPanel } from './components/CommentsPanel';
 import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
@@ -36,6 +39,9 @@ export default function App() {
   const loadDocument = useEditorStore((s) => s.loadDocument);
   const shareSession = useEditorStore((s) => s.shareSession);
   const setShareSession = useEditorStore((s) => s.setShareSession);
+  const isPageNavCollapsed = useEditorStore((s) => s.isPageNavCollapsed);
+  const showRuler = useEditorStore((s) => s.showRuler);
+  const showComments = useEditorStore((s) => s.showComments);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
@@ -95,6 +101,7 @@ export default function App() {
 
   const isOwner = shareSession === null;
   const isReadOnly = shareSession?.access === 'view';
+  const activePage = document.pages[activePageIndex] ?? document.pages[0];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -110,6 +117,7 @@ export default function App() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {isOwner && <FileMenu />}
           {!isReadOnly && <EditMenu />}
+          <ViewMenu />
           {!isReadOnly && <AddMenu />}
           <HelpMenu />
           <EditableTitle />
@@ -140,7 +148,7 @@ export default function App() {
       {!isReadOnly && <Toolbar />}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {isOwner && <PageNav />}
+        {isOwner && !isPageNavCollapsed && <PageNav />}
         <main
           className="app-canvas-area"
           style={{
@@ -151,8 +159,24 @@ export default function App() {
             padding: 24,
           }}
         >
-          <PdfCanvas page={document.pages[activePageIndex] ?? document.pages[0]} readOnly={isReadOnly} />
+          {showRuler ? (
+            <div
+              style={{
+                display: 'inline-grid',
+                gridTemplateColumns: `${RULER_THICKNESS}px auto`,
+                gridTemplateRows: `${RULER_THICKNESS}px auto`,
+              }}
+            >
+              <div style={{ background: '#fafafa', borderRight: '1px solid #ddd', borderBottom: '1px solid #ddd' }} />
+              <Ruler orientation="horizontal" lengthPx={activePage.width * ZOOM} />
+              <Ruler orientation="vertical" lengthPx={activePage.height * ZOOM} />
+              <PdfCanvas page={activePage} readOnly={isReadOnly} />
+            </div>
+          ) : (
+            <PdfCanvas page={activePage} readOnly={isReadOnly} />
+          )}
         </main>
+        {showComments && <CommentsPanel page={activePage} isReadOnly={isReadOnly} />}
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import * as fabric from 'fabric';
 import { useEditorStore } from '../store/editorStore';
 import type { Page, PageObject } from '../types/document';
 
-const ZOOM = 1; // 1 canvas px = 1 PDF point at 100%; toolbar can scale this later
+export const ZOOM = 1; // 1 canvas px = 1 PDF point at 100%; toolbar can scale this later
 
 interface Props {
   page: Page;
@@ -59,15 +59,65 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     canvas.on('selection:cleared', () => setSelectedObjectId(null));
 
     canvas.on('object:modified', (e) => {
-      const obj = e.target as fabric.Object & { id?: string };
-      if (!obj?.id) return;
-      updateObject(page.id, obj.id, {
-        x: obj.left ?? 0,
-        y: obj.top ?? 0,
-        width: (obj.width ?? 0) * (obj.scaleX ?? 1),
-        height: (obj.height ?? 0) * (obj.scaleY ?? 1),
-        rotation: obj.angle ?? 0,
+      const target = e.target as fabric.Object & { id?: string };
+
+      // ActiveSelection is Fabric's multi-select wrapper — it's created
+      // when we group-select all cells of a table. On drag-end, each
+      // object inside it has been repositioned by Fabric relative to the
+      // group's movement delta, so we update every cell in the store.
+      if (target instanceof fabric.ActiveSelection) {
+        target.getObjects().forEach((obj) => {
+          const o = obj as fabric.Object & { id?: string };
+          if (!o.id) return;
+          updateObject(page.id, o.id, {
+            x: o.left ?? 0,
+            y: o.top ?? 0,
+            width: (o.width ?? 0) * (o.scaleX ?? 1),
+            height: (o.height ?? 0) * (o.scaleY ?? 1),
+            rotation: o.angle ?? 0,
+          });
+        });
+        return;
+      }
+
+      if (!target?.id) return;
+      updateObject(page.id, target.id, {
+        x: target.left ?? 0,
+        y: target.top ?? 0,
+        width: (target.width ?? 0) * (target.scaleX ?? 1),
+        height: (target.height ?? 0) * (target.scaleY ?? 1),
+        rotation: target.angle ?? 0,
       });
+    });
+
+    // Table group-selection: when any cell is clicked (single click),
+    // find all Fabric objects sharing the same tableId and wrap them in an
+    // ActiveSelection so the whole table drags as one unit. Double-clicking
+    // a text cell still enters Fabric's text-edit mode (Fabric handles this
+    // natively before our mouse:up fires).
+    canvas.on('mouse:up', (e) => {
+      const target = e.target as (fabric.Object & { id?: string; tableId?: string }) | undefined;
+      if (!target?.tableId) return;
+
+      const tableId = target.tableId;
+      const siblings = canvas.getObjects().filter(
+        (o) => (o as fabric.Object & { tableId?: string }).tableId === tableId
+      );
+      if (siblings.length <= 1) return;
+
+      // Already a multi-selection covering this table — don't re-wrap
+      const active = canvas.getActiveObject();
+      if (active instanceof fabric.ActiveSelection) {
+        const activeIds = new Set(
+          active.getObjects().map((o) => (o as fabric.Object & { id?: string }).id)
+        );
+        if (siblings.every((s) => activeIds.has((s as fabric.Object & { id?: string }).id))) return;
+      }
+
+      canvas.discardActiveObject();
+      const sel = new fabric.ActiveSelection(siblings, { canvas });
+      canvas.setActiveObject(sel);
+      canvas.requestRenderAll();
     });
 
     // Ctrl/Cmd+Click opens a linked text object's URL, mirroring the
@@ -325,12 +375,30 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       if (isEditingText) return; // let backspace work normally inside text
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
-      const active = canvas.getActiveObject() as (fabric.Object & { id?: string }) | undefined;
-      if (!active?.id) return;
+      const active = canvas.getActiveObject();
+      if (!active) return;
       e.preventDefault();
+
+      // ActiveSelection = entire table selected — delete all cells
+      if (active instanceof fabric.ActiveSelection) {
+        active.getObjects().forEach((o) => {
+          const id = (o as fabric.Object & { id?: string }).id;
+          if (id) {
+            canvas.remove(o);
+            removeObject(page.id, id);
+          }
+        });
+        canvas.discardActiveObject();
+        canvas.requestRenderAll();
+        return;
+      }
+
+      // Single object
+      const single = active as fabric.Object & { id?: string };
+      if (!single.id) return;
       canvas.remove(active);
       canvas.requestRenderAll();
-      removeObject(page.id, active.id);
+      removeObject(page.id, single.id);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -366,8 +434,9 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
         underline: !!obj.link,
         textAlign: obj.align,
       });
-      (t as fabric.Object & { id?: string; link?: string }).id = obj.id;
-      (t as fabric.Object & { id?: string; link?: string }).link = obj.link;
+      (t as fabric.Object & { id?: string; link?: string; tableId?: string }).id = obj.id;
+      (t as fabric.Object & { id?: string; link?: string; tableId?: string }).link = obj.link;
+      (t as fabric.Object & { id?: string; link?: string; tableId?: string }).tableId = obj.tableId;
       return t;
     }
     case 'rect': {
@@ -381,7 +450,8 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
         rx: obj.cornerRadius,
         ry: obj.cornerRadius,
       });
-      (r as fabric.Object & { id?: string }).id = obj.id;
+      (r as fabric.Object & { id?: string; tableId?: string }).id = obj.id;
+      (r as fabric.Object & { id?: string; tableId?: string }).tableId = obj.tableId;
       return r;
     }
     case 'ellipse': {
@@ -412,6 +482,28 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
       // Returning null here keeps this function's signature synchronous;
       // see addImageObject in toolbar actions for the async add path.
       return null;
+    }
+    case 'group': {
+      // Build each child synchronously. Children are in group-local
+      // coordinates — Fabric Group positions them relative to the group
+      // origin automatically, so we pass x/y as-is and Fabric handles it.
+      const childObjects: fabric.Object[] = [];
+      for (const child of obj.children) {
+        if (child.type === 'image') continue; // skip async children for now
+        const fabricChild = createFabricObject(child);
+        if (fabricChild) childObjects.push(fabricChild);
+      }
+
+      if (childObjects.length === 0) return null;
+
+      const g = new fabric.Group(childObjects, {
+        left: obj.x,
+        top: obj.y,
+        angle: obj.rotation,
+        opacity: obj.opacity,
+      });
+      (g as fabric.Object & { id?: string }).id = obj.id;
+      return g;
     }
     default:
       return null;

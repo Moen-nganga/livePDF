@@ -14,7 +14,7 @@
  * swap the canvas library or export library later without touching state.
  */
 
-export type ObjectType = 'text' | 'rect' | 'ellipse' | 'image' | 'line';
+export type ObjectType = 'text' | 'rect' | 'ellipse' | 'image' | 'line' | 'group';
 
 export interface BaseObject {
   id: string;
@@ -25,6 +25,9 @@ export interface BaseObject {
   height: number;
   rotation: number; // degrees
   opacity: number; // 0-1
+  /** When set, this object belongs to a table group. All objects sharing
+   *  the same tableId are selected and moved together as one unit. */
+  tableId?: string;
 }
 
 export interface TextObject extends BaseObject {
@@ -43,7 +46,8 @@ export interface TextObject extends BaseObject {
 
 export interface RectObject extends BaseObject {
   type: 'rect';
-  fill: string;
+  /** Omit for no fill — used by the border/frame tool, which is just an outline. */
+  fill?: string;
   stroke: string;
   strokeWidth: number;
   cornerRadius: number;
@@ -51,7 +55,7 @@ export interface RectObject extends BaseObject {
 
 export interface EllipseObject extends BaseObject {
   type: 'ellipse';
-  fill: string;
+  fill?: string;
   stroke: string;
   strokeWidth: number;
 }
@@ -68,12 +72,28 @@ export interface LineObject extends BaseObject {
   strokeWidth: number;
 }
 
+/**
+ * A group of objects treated as a single draggable/selectable unit on the
+ * canvas. Used for tables (all cells move together) and any other case where
+ * multiple objects need to behave as one.
+ *
+ * Children are stored in group-local coordinates (origin = group top-left).
+ * When exporting to PDF, each child's absolute position is computed by adding
+ * the group's own x/y offset — see exportPdf.ts's drawObject 'group' case.
+ */
+export interface GroupObject extends BaseObject {
+  type: 'group';
+  /** Child objects in group-local coordinates (origin = top-left of the group). */
+  children: PageObject[];
+}
+
 export type PageObject =
   | TextObject
   | RectObject
   | EllipseObject
   | ImageObject
-  | LineObject;
+  | LineObject
+  | GroupObject;
 
 export interface Page {
   id: string;
@@ -91,12 +111,39 @@ export interface Page {
   objects: PageObject[];
 }
 
+/**
+ * A comment attached to a page, optionally anchored to a specific object on
+ * that page. When `objectId` is omitted, it's a general comment about the
+ * page as a whole (shown in CommentsPanel as "General comment").
+ *
+ * There's no canvas marker/pin for these — CommentsPanel lists them
+ * separately from the canvas rather than rendering an anchor on top of the
+ * object itself. `objectId` can end up pointing at an object that's since
+ * been deleted (we don't cascade-delete comments when an object is
+ * removed); consumers should handle a missing lookup gracefully rather than
+ * assuming the id always resolves.
+ */
+export interface Comment {
+  id: string;
+  pageId: string;
+  objectId?: string;
+  text: string;
+  createdAt: number;
+  resolved: boolean;
+}
+
 export interface PDFDocument {
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
   pages: Page[];
+  /**
+   * Optional so documents saved before this field existed still load
+   * correctly — always read as `document.comments ?? []`, never assume
+   * it's present.
+   */
+  comments?: Comment[];
 }
 
 // Standard page sizes in points, for the "blank canvas" flow
