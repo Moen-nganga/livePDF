@@ -4,49 +4,37 @@ import { useEditorStore } from '../store/editorStore';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 import type { PageObject } from '../types/document';
 
-const MENU_ID = 'add';
-
 export function AddMenu() {
-  const openMenuId = useEditorStore((s) => s.openMenuId);
-  const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
-  const open = openMenuId === MENU_ID;
-
+  const [open, setOpen] = useState(false);
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const { triggerImagePick, fileInputElement } = useImageAdd();
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpenMenuId(null);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpenMenuId(null);
+    const close = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open, setOpenMenuId]);
+  }, [open]);
 
   function handleImage() {
-    setOpenMenuId(null);
+    setOpen(false);
     triggerImagePick();
   }
 
   function handleTable() {
-    setOpenMenuId(null);
+    setOpen(false);
     setTableDialogOpen(true);
-  }
-
-  // Hovering only switches menus once one is already open by a click —
-  // hovering the bar with nothing open does nothing, matching native menu
-  // bars and Docs.
-  function handleMouseEnter() {
-    if (openMenuId !== null && openMenuId !== MENU_ID) setOpenMenuId(MENU_ID);
   }
 
   return (
     <>
-      <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
-        <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
+      <div style={{ position: 'relative', display: 'inline-block' }}>
+        <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
           Add
         </button>
 
@@ -159,8 +147,21 @@ function TableDialog({ onClose }: { onClose: () => void }) {
     const cellWidth = tableWidth / cols;
     const headerHeight = 36;
     const bodyHeight = 32;
+
+    // Count distinct existing tables on this page to offset new ones
+    const existingTableIds = new Set(
+      activePage.objects
+        .map((o) => o.tableId)
+        .filter(Boolean)
+    );
+    const tableCount = existingTableIds.size;
+    const totalHeight = hasHeader
+      ? headerHeight + (rows - 1) * bodyHeight
+      : rows * bodyHeight;
+
     const startX = margin;
-    const startY = 80;
+    // Each new table is placed below any existing ones, with a small gap
+    const startY = 60 + tableCount * (totalHeight + 20);
 
     const objects: PageObject[] = [];
 

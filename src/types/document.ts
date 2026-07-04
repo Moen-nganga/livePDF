@@ -42,6 +42,13 @@ export interface TextObject extends BaseObject {
   align: 'left' | 'center' | 'right';
   /** When set, this text becomes a clickable hyperlink in the exported PDF. */
   link?: string;
+  /**
+   * Set on text created via the "+ Watermark" toolbar button. Purely a
+   * UI/identification tag, same reasoning as RectObject.isHighlight — a
+   * watermark is just a rotated, low-opacity text object; nothing in
+   * rendering or PDF export treats it specially.
+   */
+  isWatermark?: boolean;
 }
 
 export interface RectObject extends BaseObject {
@@ -51,6 +58,15 @@ export interface RectObject extends BaseObject {
   stroke: string;
   strokeWidth: number;
   cornerRadius: number;
+  /**
+   * Set on rects created via the "+ Highlight" toolbar button — a plain
+   * rect with a semi-transparent fill and no visible stroke, used to mark
+   * up existing content. Purely a UI/identification tag (so the toolbar
+   * knows to show the highlight color picker and active-tool state for
+   * it); rendering and PDF export don't check this at all, since a
+   * highlight draws exactly like any other rect with fill+opacity set.
+   */
+  isHighlight?: boolean;
 }
 
 export interface EllipseObject extends BaseObject {

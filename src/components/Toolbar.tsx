@@ -31,18 +31,24 @@ export function Toolbar() {
   // rectangle, just styled differently. See addBorder below.
   const selectedBorder: RectObject | undefined =
     selectedObject?.type === 'rect' && !selectedObject.fill ? selectedObject : undefined;
+  // A "highlight" is a rect too — semi-transparent fill, no visible
+  // stroke — tagged with isHighlight so it doesn't get confused with a
+  // regular filled rectangle. See addHighlight below.
+  const selectedHighlight: RectObject | undefined =
+    selectedObject?.type === 'rect' && selectedObject.isHighlight ? selectedObject : undefined;
 
   // Drives which +Text/+Rectangle/etc button is highlighted, based on
   // what's currently selected on the canvas — not which button was last
   // clicked. Selecting nothing (or an object type with no matching
   // toolbar button, like 'line') means no add-button is highlighted.
-  type ToolKind = 'text' | 'rect' | 'border' | 'ellipse' | 'image' | null;
+  type ToolKind = 'text' | 'rect' | 'border' | 'highlight' | 'ellipse' | 'image' | null;
   const activeTool: ToolKind = (() => {
     if (!selectedObject) return null;
     switch (selectedObject.type) {
       case 'text':
         return 'text';
       case 'rect':
+        if (selectedHighlight) return 'highlight';
         return selectedBorder ? 'border' : 'rect';
       case 'ellipse':
         return 'ellipse';
@@ -60,6 +66,12 @@ export function Toolbar() {
   // last-used style per tool.
   const [borderDefaults, setBorderDefaults] = useState({ strokeWidth: 2, stroke: '#222222' });
 
+  // Same "remember the last-used style" pattern as borderDefaults — picking
+  // a highlight color once carries over to the next highlight you add.
+  const [highlightDefaults, setHighlightDefaults] = useState({ fill: '#ffff00' });
+
+  const [watermarkDialogOpen, setWatermarkDialogOpen] = useState(false);
+
   function updateSelectedText(patch: Partial<TextObject>) {
     if (!activePage || !selectedText) return;
     updateObject(activePage.id, selectedText.id, patch);
@@ -68,6 +80,11 @@ export function Toolbar() {
   function updateSelectedBorder(patch: Partial<RectObject>) {
     if (!activePage || !selectedBorder) return;
     updateObject(activePage.id, selectedBorder.id, patch);
+  }
+
+  function updateSelectedHighlight(patch: Partial<RectObject>) {
+    if (!activePage || !selectedHighlight) return;
+    updateObject(activePage.id, selectedHighlight.id, patch);
   }
 
   function rotateSelected() {
@@ -157,6 +174,97 @@ export function Toolbar() {
     addObject(activePage.id, obj);
   }
 
+  // Inserted as a perfectly ordinary, fully editable text object — same
+  // double-click-to-edit, restyle, move, delete behavior as any other text.
+  // "Editable" here just means it's pre-filled with today's date rather
+  // than a fixed, locked-in field.
+  function addDate() {
+    if (!activePage) return;
+    const { x, y } = nextOffset(activePage.objects.length);
+    const today = new Date().toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    const obj: PageObject = {
+      id: nanoid(),
+      type: 'text',
+      x,
+      y,
+      width: 160,
+      height: 32,
+      ...baseDefaults,
+      text: today,
+      fontSize: 14,
+      fontFamily: 'Helvetica',
+      color: '#111111',
+      bold: false,
+      italic: false,
+      strikethrough: false,
+      align: 'left',
+    };
+    addObject(activePage.id, obj);
+  }
+
+  function addHighlight() {
+    if (!activePage) return;
+    const { x, y } = nextOffset(activePage.objects.length);
+    const obj: PageObject = {
+      id: nanoid(),
+      type: 'rect',
+      isHighlight: true,
+      x,
+      y,
+      width: 200,
+      height: 28,
+      ...baseDefaults,
+      opacity: 0.4, // semi-transparent so whatever's underneath still reads through
+      fill: highlightDefaults.fill,
+      // strokeWidth 0 makes the stroke invisible regardless of its color —
+      // deliberately NOT the CSS keyword 'transparent' here, since
+      // exportPdf.ts's hexToRgb only parses real "#rrggbb" hex strings.
+      stroke: '#000000',
+      strokeWidth: 0,
+      cornerRadius: 0,
+    };
+    addObject(activePage.id, obj);
+  }
+
+  // Large, faint, diagonal text centered on the current page. Applies to
+  // this page only (not the whole document) — once placed, it's a normal
+  // text object like any other: movable, resizable, restylable, deletable.
+  function addWatermark(text: string) {
+    if (!activePage) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const width = Math.min(activePage.width * 0.9, 500);
+    const fontSize = 60;
+    const height = fontSize * 1.3;
+
+    const obj: PageObject = {
+      id: nanoid(),
+      type: 'text',
+      isWatermark: true,
+      x: (activePage.width - width) / 2,
+      y: (activePage.height - height) / 2,
+      width,
+      height,
+      rotation: -45,
+      opacity: 0.15,
+      text: trimmed,
+      fontSize,
+      fontFamily: 'Helvetica',
+      color: '#888888',
+      bold: true,
+      italic: false,
+      strikethrough: false,
+      align: 'center',
+    };
+    addObject(activePage.id, obj);
+    setWatermarkDialogOpen(false);
+  }
+
   function activeToolStyle(tool: NonNullable<typeof activeTool>): React.CSSProperties {
     return activeTool === tool
       ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
@@ -206,6 +314,29 @@ export function Toolbar() {
       />
       <button onClick={triggerImagePick} style={activeToolStyle('image')}>
         + Image
+      </button>
+
+      <button onClick={addDate} title="Insert today's date as editable text">
+        + Date
+      </button>
+
+      <button
+        onClick={addHighlight}
+        title="Add a semi-transparent highlight overlay"
+        style={activeToolStyle('highlight')}
+      >
+        + Highlight
+      </button>
+      <HighlightColorPicker
+        value={selectedHighlight ? selectedHighlight.fill ?? highlightDefaults.fill : highlightDefaults.fill}
+        onChange={(fill) => {
+          setHighlightDefaults((d) => ({ ...d, fill }));
+          if (selectedHighlight) updateSelectedHighlight({ fill });
+        }}
+      />
+
+      <button onClick={() => setWatermarkDialogOpen(true)} title="Add a diagonal watermark to the current page">
+        + Watermark
       </button>
 
       <Divider />
@@ -284,6 +415,9 @@ export function Toolbar() {
         Double-click text to edit it · select an object and press Delete to remove it
       </span>
       {fileInputElement}
+      {watermarkDialogOpen && (
+        <WatermarkDialog onInsert={addWatermark} onClose={() => setWatermarkDialogOpen(false)} />
+      )}
     </div>
   );
 }
@@ -682,6 +816,104 @@ function BorderColorPicker({
 
 function Divider() {
   return <div style={{ width: 1, background: 'var(--color-border)', margin: '2px 4px' }} />;
+}
+
+// Native color input rather than a curated swatch grid — "any color the
+// user wants" needs the full spectrum, which a fixed swatch list can't
+// offer. Browsers render this as their own OS-level color picker.
+function HighlightColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <input
+      type="color"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      title="Highlight color — pick any color"
+      style={{
+        width: 28,
+        height: 28,
+        padding: 0,
+        border: '1px solid var(--color-border)',
+        borderRadius: 4,
+        cursor: 'pointer',
+        background: 'none',
+      }}
+    />
+  );
+}
+
+function WatermarkDialog({
+  onInsert,
+  onClose,
+}: {
+  onInsert: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState('CONFIDENTIAL');
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000,
+      }}
+    >
+      <div
+        className="surface-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ padding: 24, width: 360 }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Add watermark</h3>
+          <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 16, cursor: 'pointer' }}>
+            ✕
+          </button>
+        </div>
+
+        <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: '#666' }}>
+          Watermark text
+        </label>
+        <input
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => e.key === 'Enter' && text.trim() && onInsert(text)}
+          style={{
+            width: '100%',
+            padding: '8px 10px',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            fontSize: 14,
+            boxSizing: 'border-box',
+          }}
+        />
+
+        <p style={{ fontSize: 12, color: '#888', marginTop: 10 }}>
+          Added as a large, faint, diagonal overlay across the current page only. It's a normal
+          text object afterward — you can move, resize, restyle, or delete it like anything else.
+        </p>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button onClick={onClose}>Cancel</button>
+          <button className="btn-accent" onClick={() => onInsert(text)} disabled={!text.trim()}>
+            Insert watermark
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Fixed list, 1–18 — replaces the old −/+ stepper. Deliberately NOT

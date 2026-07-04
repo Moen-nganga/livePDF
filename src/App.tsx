@@ -7,13 +7,10 @@ import { Toolbar } from './components/Toolbar';
 import { EditableTitle } from './components/EditableTitle';
 import { FileMenu } from './components/FileMenu';
 import { EditMenu } from './components/EditMenu';
-import { ViewMenu } from './components/ViewMenu';
 import { AddMenu } from './components/AddMenu';
 import { HelpMenu } from './components/HelpMenu';
-import { PdfCanvas, ZOOM } from './components/PdfCanvas';
-import { Ruler, RULER_THICKNESS } from './components/Ruler';
+import { PdfCanvas } from './components/PdfCanvas';
 import { PageNav } from './components/PageNav';
-import { CommentsPanel } from './components/CommentsPanel';
 import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
@@ -39,11 +36,6 @@ export default function App() {
   const loadDocument = useEditorStore((s) => s.loadDocument);
   const shareSession = useEditorStore((s) => s.shareSession);
   const setShareSession = useEditorStore((s) => s.setShareSession);
-  const isPageNavCollapsed = useEditorStore((s) => s.isPageNavCollapsed);
-  const showRuler = useEditorStore((s) => s.showRuler);
-  const showComments = useEditorStore((s) => s.showComments);
-  const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
-  const liveObjectBounds = useEditorStore((s) => s.liveObjectBounds);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
@@ -103,25 +95,6 @@ export default function App() {
 
   const isOwner = shareSession === null;
   const isReadOnly = shareSession?.access === 'view';
-  const activePage = document.pages[activePageIndex] ?? document.pages[0];
-
-  // Bounds to show on the ruler + readout badge: prefer the live value
-  // (kept current during an active drag by PdfCanvas's object:moving
-  // handler), falling back to the committed value in the store so the
-  // readout still shows correctly after a toolbar edit (e.g. rotate) that
-  // doesn't go through a Fabric drag at all.
-  const selectedObject = activePage.objects.find((o) => o.id === selectedObjectId);
-  const selectionBounds =
-    liveObjectBounds ??
-    (selectedObject
-      ? { x: selectedObject.x, y: selectedObject.y, width: selectedObject.width, height: selectedObject.height }
-      : null);
-  const horizontalHighlight = selectionBounds
-    ? { start: selectionBounds.x, end: selectionBounds.x + selectionBounds.width }
-    : null;
-  const verticalHighlight = selectionBounds
-    ? { start: selectionBounds.y, end: selectionBounds.y + selectionBounds.height }
-    : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -137,7 +110,6 @@ export default function App() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {isOwner && <FileMenu />}
           {!isReadOnly && <EditMenu />}
-          <ViewMenu />
           {!isReadOnly && <AddMenu />}
           <HelpMenu />
           <EditableTitle />
@@ -161,14 +133,14 @@ export default function App() {
         </div>
       </header>
 
-      {downloadDialogOpen && (
+      {downloadDialogOpen && document && (
         <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
       )}
 
       {!isReadOnly && <Toolbar />}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {isOwner && !isPageNavCollapsed && <PageNav />}
+        {isOwner && <PageNav />}
         <main
           className="app-canvas-area"
           style={{
@@ -179,45 +151,8 @@ export default function App() {
             padding: 24,
           }}
         >
-          {showRuler ? (
-            <div
-              style={{
-                display: 'inline-grid',
-                gridTemplateColumns: `${RULER_THICKNESS}px auto`,
-                gridTemplateRows: `${RULER_THICKNESS}px auto`,
-              }}
-            >
-              <div style={{ background: '#fafafa', borderRight: '1px solid #ddd', borderBottom: '1px solid #ddd' }} />
-              <Ruler orientation="horizontal" lengthPx={activePage.width * ZOOM} highlightRange={horizontalHighlight} />
-              <Ruler orientation="vertical" lengthPx={activePage.height * ZOOM} highlightRange={verticalHighlight} />
-              <div style={{ position: 'relative' }}>
-                <PdfCanvas page={activePage} readOnly={isReadOnly} />
-                {selectionBounds && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: selectionBounds.x,
-                      top: Math.max(0, selectionBounds.y - 20),
-                      background: '#1a1a1a',
-                      color: '#fff',
-                      fontSize: 11,
-                      padding: '2px 6px',
-                      borderRadius: 3,
-                      pointerEvents: 'none',
-                      whiteSpace: 'nowrap',
-                      zIndex: 10,
-                    }}
-                  >
-                    {Math.round(selectionBounds.x)}, {Math.round(selectionBounds.y)} · {Math.round(selectionBounds.width)} × {Math.round(selectionBounds.height)} pt
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <PdfCanvas page={activePage} readOnly={isReadOnly} />
-          )}
+          <PdfCanvas page={document.pages[activePageIndex] ?? document.pages[0]} readOnly={isReadOnly} />
         </main>
-        {showComments && <CommentsPanel page={activePage} isReadOnly={isReadOnly} />}
       </div>
     </div>
   );

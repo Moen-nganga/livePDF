@@ -4,7 +4,6 @@ import {
   StandardFonts,
   degrees,
   PDFName,
-  PDFDict,
   PDFArray,
   PDFString,
   PDFRef,
@@ -51,11 +50,13 @@ function pickFont(fonts: FontSet, fontFamily: string, bold: boolean): PDFFont {
 }
 
 /**
- * Builds a real PDF from our document model and saves it, letting the
- * user choose the filename (and, on supported browsers, the destination
- * folder too via the native Save dialog).
+ * Builds the actual PDF bytes from our document model. Shared by both
+ * exportToPdf (download/save-as) and printPdf (open the browser's print
+ * dialog) so the page/object drawing logic exists in exactly one place —
+ * printing is not a separate rendering path, just a different thing done
+ * with the same bytes afterward.
  */
-export async function exportToPdf(doc: PDFDocument, filename: string): Promise<void> {
+async function buildPdf(doc: PDFDocument): Promise<Uint8Array> {
   const pdf = await PdfLibDocument.create();
   const fonts: FontSet = {
     Helvetica: await pdf.embedFont(StandardFonts.Helvetica),
@@ -79,9 +80,72 @@ export async function exportToPdf(doc: PDFDocument, filename: string): Promise<v
     }
   }
 
-  const bytes = await pdf.save();
+  return pdf.save();
+}
+
+/**
+ * Builds a real PDF from our document model and saves it, letting the
+ * user choose the filename (and, on supported browsers, the destination
+ * folder too via the native Save dialog).
+ */
+export async function exportToPdf(doc: PDFDocument, filename: string): Promise<void> {
+  const bytes = await buildPdf(doc);
   const safeName = filename.trim().replace(/\.pdf$/i, '') || 'document';
   await saveBytes(bytes, `${safeName}.pdf`);
+}
+
+/**
+ * Builds the same PDF and opens the browser's native print dialog for it,
+ * without prompting for a filename first (printing isn't saving a file).
+ *
+ * Implementation: loads the PDF into a hidden <iframe> (using the
+ * browser's own built-in PDF viewer) and calls print() on that iframe's
+ * window. This is more reliable than window.open(url) + print() on the
+ * new window — many browsers block or don't expose print() across that
+ * boundary, and popup blockers can kill the new tab outright. If the
+ * iframe approach is blocked for some reason (e.g. a browser that
+ * sandboxes scripting into a PDF-rendered iframe), it falls back to
+ * simply opening the PDF in a new tab, where the browser's own viewer
+ * still provides a print button even though we can't trigger it directly.
+ */
+export async function printPdf(doc: PDFDocument): Promise<void> {
+  const bytes = await buildPdf(doc);
+  const plainBytes = new Uint8Array(bytes); // see saveBytes below for why this copy is needed
+  const blob = new Blob([plainBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+
+  const iframe = window.document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = 'none';
+
+  let cleanedUp = false;
+  function cleanup() {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    iframe.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+    // afterprint doesn't fire reliably in every browser (especially if the
+    // print dialog is cancelled), so clean up on a generous delay instead
+    // of relying on it — long enough that a slow print dialog isn't cut
+    // off, short enough not to leak memory indefinitely.
+    setTimeout(cleanup, 60_000);
+  };
+
+  iframe.src = url;
+  window.document.body.appendChild(iframe);
 }
 
 async function embedImage(pdf: PdfLibDocument, dataUrl: string) {

@@ -25,7 +25,6 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   const updateObject = useEditorStore((s) => s.updateObject);
   const removeObject = useEditorStore((s) => s.removeObject);
   const setSelectedObjectId = useEditorStore((s) => s.setSelectedObjectId);
-  const setLiveObjectBounds = useEditorStore((s) => s.setLiveObjectBounds);
 
   // Set up the Fabric canvas once per page. We deliberately do NOT let
   // React render the <canvas> element itself (no JSX <canvas> below).
@@ -54,35 +53,30 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     fabricRef.current = canvas;
 
     canvas.on('selection:created', (e) => {
-      const obj = e.selected?.[0] as (fabric.Object & { id?: string }) | undefined;
+      const obj = e.selected?.[0] as (fabric.Object & { id?: string; tableId?: string }) | undefined;
       setSelectedObjectId(obj?.id ?? null);
-      // Use canvas.getActiveObject() rather than e.selected[0] here — for a
-      // multi-object ActiveSelection (table cells), that's the wrapper with
-      // the correct aggregate left/top/width/height for the whole
-      // selection, not just the first cell.
-      const active = canvas.getActiveObject();
-      setLiveObjectBounds(active ? getObjectBounds(active) : null);
-    });
-    canvas.on('selection:cleared', () => {
-      setSelectedObjectId(null);
-      setLiveObjectBounds(null);
-    });
 
-    // Fires continuously while dragging (unlike object:modified, which only
-    // fires once on mouse-up) — this is what makes the ruler highlight and
-    // position/size readout track the object live instead of only updating
-    // after it's dropped.
-    canvas.on('object:moving', (e) => {
-      setLiveObjectBounds(getObjectBounds(e.target));
+      // If a text cell was single-clicked, also group-select the whole table.
+      const objTableId = (obj as (fabric.Object & { tableId?: string }) | undefined)?.tableId;
+      if (objTableId && (obj instanceof fabric.Textbox || obj instanceof fabric.IText)) {
+        const isEditing = (obj as fabric.Object & { isEditing?: boolean }).isEditing;
+        if (!isEditing) {
+          const siblings = canvas.getObjects().filter(
+            (o) => (o as fabric.Object & { tableId?: string }).tableId === objTableId
+          );
+          if (siblings.length > 1) {
+            canvas.discardActiveObject();
+            const sel = new fabric.ActiveSelection(siblings, { canvas });
+            canvas.setActiveObject(sel);
+            canvas.requestRenderAll();
+          }
+        }
+      }
     });
+    canvas.on('selection:cleared', () => setSelectedObjectId(null));
 
     canvas.on('object:modified', (e) => {
       const target = e.target as fabric.Object & { id?: string };
-
-      // Refresh the bounds one more time on commit — object:moving fires
-      // right up until mouse-up, but a resize (as opposed to a drag) can
-      // finalize scaleX/scaleY in a way that's only fully settled here.
-      setLiveObjectBounds(getObjectBounds(target));
 
       // ActiveSelection is Fabric's multi-select wrapper — it's created
       // when we group-select all cells of a table. On drag-end, each
@@ -113,14 +107,26 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       });
     });
 
-    // Table group-selection: when any cell is clicked (single click),
-    // find all Fabric objects sharing the same tableId and wrap them in an
-    // ActiveSelection so the whole table drags as one unit. Double-clicking
-    // a text cell still enters Fabric's text-edit mode (Fabric handles this
-    // natively before our mouse:up fires).
+    // Table group-selection: when a RECT cell is clicked (single click),
+    // select all siblings so the table drags as one unit. We deliberately
+    // skip this when the target is a Textbox — Fabric needs to own those
+    // clicks so double-click text editing works natively.
     canvas.on('mouse:up', (e) => {
+      // If we just entered text-editing mode via double-click, skip the
+      // group-reselection logic entirely — otherwise it would immediately
+      // kick the Textbox out of editing mode before the user can type.
+      if (justEnteredTextEdit) {
+        justEnteredTextEdit = false;
+        return;
+      }
+
       const target = e.target as (fabric.Object & { id?: string; tableId?: string }) | undefined;
       if (!target?.tableId) return;
+
+      // Let Fabric handle text cells entirely — don't interfere with
+      // click-to-select or double-click-to-edit on Textbox objects.
+      const targetType = target.type;
+      if (targetType === 'textbox' || targetType === 'i-text') return;
 
       const tableId = target.tableId;
       const siblings = canvas.getObjects().filter(
@@ -141,6 +147,56 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       const sel = new fabric.ActiveSelection(siblings, { canvas });
       canvas.setActiveObject(sel);
       canvas.requestRenderAll();
+    });
+
+    // Flag set by mouse:dblclick when we enter text-editing on a table cell.
+    // The mouse:up handler checks this and skips group-reselection so it
+    // doesn't immediately kick the Textbox back out of editing mode.
+    let justEnteredTextEdit = false;
+
+    // When the user double-clicks a rect cell (the background), find the
+    // Textbox that sits directly on top of it (same tableId, closest
+    // center point) and enter text-editing mode on that cell — this way
+    // you don't have to precisely hit the text label to start typing.
+    canvas.on('mouse:dblclick', (e) => {
+      const target = e.target as (fabric.Object & { tableId?: string }) | undefined;
+      if (!target?.tableId) return;
+      const tableId = target.tableId; // read before instanceof narrows the type
+
+      // Double-clicked directly on the text label — enter editing on it
+      if (target instanceof fabric.Textbox) {
+        justEnteredTextEdit = true;
+        canvas.setActiveObject(target);
+        target.enterEditing();
+        target.selectAll();
+        canvas.requestRenderAll();
+        return;
+      }
+
+      // Double-clicked on the rect background — find the nearest Textbox
+      const pointer = canvas.getPointer(e.e);
+      let bestText: fabric.Textbox | null = null;
+      let bestDist = Infinity;
+
+      canvas.getObjects().forEach((o) => {
+        if ((o as fabric.Object & { tableId?: string }).tableId !== tableId) return;
+        if (!(o instanceof fabric.Textbox)) return;
+        const cx = (o.left ?? 0) + (o.width ?? 0) / 2;
+        const cy = (o.top ?? 0) + (o.height ?? 0) / 2;
+        const dist = Math.hypot(pointer.x - cx, pointer.y - cy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestText = o as fabric.Textbox;
+        }
+      });
+
+      if (bestText) {
+        justEnteredTextEdit = true;
+        canvas.setActiveObject(bestText);
+        (bestText as fabric.Textbox).enterEditing();
+        (bestText as fabric.Textbox).selectAll();
+        canvas.requestRenderAll();
+      }
     });
 
     // Ctrl/Cmd+Click opens a linked text object's URL, mirroring the
@@ -435,22 +491,6 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   );
 }
 
-/**
- * Reads a Fabric object's (or ActiveSelection's — same shape) current
- * on-canvas bounding box. Used to feed the ruler's alignment highlight and
- * the position/size readout badge in App.tsx; kept as a plain function
- * rather than inline so both the live 'object:moving' handler and the
- * one-shot selection/modified handlers compute bounds identically.
- */
-function getObjectBounds(obj: fabric.Object) {
-  return {
-    x: obj.left ?? 0,
-    y: obj.top ?? 0,
-    width: (obj.width ?? 0) * (obj.scaleX ?? 1),
-    height: (obj.height ?? 0) * (obj.scaleY ?? 1),
-  };
-}
-
 function createFabricObject(obj: PageObject): fabric.Object | null {
   const common = {
     left: obj.x,
@@ -461,9 +501,14 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
 
   switch (obj.type) {
     case 'text': {
+      const isTableCell = !!obj.tableId;
       const t = new fabric.Textbox(obj.text, {
         ...common,
         width: obj.width,
+        // For table cells, set explicit height matching the cell rect so
+        // empty cells are clickable — Fabric auto-shrinks Textbox height
+        // to content otherwise, making empty cells have near-zero hit area.
+        ...(isTableCell ? { height: obj.height, minHeight: obj.height } : {}),
         fontSize: obj.fontSize,
         fontFamily: obj.fontFamily,
         fill: obj.color,
@@ -521,28 +566,6 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
       // Returning null here keeps this function's signature synchronous;
       // see addImageObject in toolbar actions for the async add path.
       return null;
-    }
-    case 'group': {
-      // Build each child synchronously. Children are in group-local
-      // coordinates — Fabric Group positions them relative to the group
-      // origin automatically, so we pass x/y as-is and Fabric handles it.
-      const childObjects: fabric.Object[] = [];
-      for (const child of obj.children) {
-        if (child.type === 'image') continue; // skip async children for now
-        const fabricChild = createFabricObject(child);
-        if (fabricChild) childObjects.push(fabricChild);
-      }
-
-      if (childObjects.length === 0) return null;
-
-      const g = new fabric.Group(childObjects, {
-        left: obj.x,
-        top: obj.y,
-        angle: obj.rotation,
-        opacity: obj.opacity,
-      });
-      (g as fabric.Object & { id?: string }).id = obj.id;
-      return g;
     }
     default:
       return null;
