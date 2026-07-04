@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useEditorStore } from '../store/editorStore';
+
+const MENU_ID = 'help';
 
 /**
  * The Help menu — opens static HTML pages in a new tab (public/legal/),
@@ -7,28 +10,37 @@ import { useEffect, useState } from 'react';
  * training, function list, etc., since those don't apply here.
  */
 export function HelpMenu() {
-  const [open, setOpen] = useState(false);
+  const openMenuId = useEditorStore((s) => s.openMenuId);
+  const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
+  const open = openMenuId === MENU_ID;
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const close = () => setOpenMenuId(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpenMenuId(null);
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, setOpenMenuId]);
 
   function openPage(path: string) {
-    setOpen(false);
+    setOpenMenuId(null);
     window.open(path, '_blank', 'noopener,noreferrer');
   }
 
+  // Hovering only switches menus once one is already open by a click —
+  // hovering the bar with nothing open does nothing, matching native menu
+  // bars and Docs.
+  function handleMouseEnter() {
+    if (openMenuId !== null && openMenuId !== MENU_ID) setOpenMenuId(MENU_ID);
+  }
+
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+    <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
+      <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
         Help
       </button>
 

@@ -38,6 +38,26 @@ interface EditorState {
   showComments: boolean;
   setShowComments: (value: boolean) => void;
 
+  // Live bounds of the currently selected object, kept in sync by
+  // PdfCanvas on selection and on every 'object:moving' tick (not just on
+  // drop) — used by the ruler's alignment highlight and the position/size
+  // readout badge, both of which need to track a drag in real time rather
+  // than only updating once the object is released. null when nothing is
+  // selected. Transient view state, not undoable.
+  liveObjectBounds: { x: number; y: number; width: number; height: number } | null;
+  setLiveObjectBounds: (bounds: { x: number; y: number; width: number; height: number } | null) => void;
+
+  // Which top-level menu (File/Edit/View/Add/Help) is currently open, by a
+  // short id ('file' | 'edit' | 'view' | 'add' | 'help'), or null if none
+  // is open. Lives here rather than as local state in each menu component
+  // so that, once a menu is open by a click, hovering over a *different*
+  // menu button can switch directly to it — the standard "click once, then
+  // hover across the bar" behavior native menu bars and Docs use. Only one
+  // menu is ever open at a time by construction. Transient view state, not
+  // undoable.
+  openMenuId: string | null;
+  setOpenMenuId: (id: string | null) => void;
+
   // Comments
   // These DO go through withHistory (see below) — unlike the view-state
   // flags above, comments are actual document content that gets saved to
@@ -130,6 +150,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
     setShowRuler: (value) => set({ showRuler: value }),
     showComments: false,
     setShowComments: (value) => set({ showComments: value }),
+    liveObjectBounds: null,
+    setLiveObjectBounds: (bounds) => set({ liveObjectBounds: bounds }),
+    openMenuId: null,
+    setOpenMenuId: (id) => set({ openMenuId: id }),
     history: { past: [], future: [] },
 
     undo: () => {

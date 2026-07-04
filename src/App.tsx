@@ -42,6 +42,8 @@ export default function App() {
   const isPageNavCollapsed = useEditorStore((s) => s.isPageNavCollapsed);
   const showRuler = useEditorStore((s) => s.showRuler);
   const showComments = useEditorStore((s) => s.showComments);
+  const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
+  const liveObjectBounds = useEditorStore((s) => s.liveObjectBounds);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
@@ -102,6 +104,24 @@ export default function App() {
   const isOwner = shareSession === null;
   const isReadOnly = shareSession?.access === 'view';
   const activePage = document.pages[activePageIndex] ?? document.pages[0];
+
+  // Bounds to show on the ruler + readout badge: prefer the live value
+  // (kept current during an active drag by PdfCanvas's object:moving
+  // handler), falling back to the committed value in the store so the
+  // readout still shows correctly after a toolbar edit (e.g. rotate) that
+  // doesn't go through a Fabric drag at all.
+  const selectedObject = activePage.objects.find((o) => o.id === selectedObjectId);
+  const selectionBounds =
+    liveObjectBounds ??
+    (selectedObject
+      ? { x: selectedObject.x, y: selectedObject.y, width: selectedObject.width, height: selectedObject.height }
+      : null);
+  const horizontalHighlight = selectionBounds
+    ? { start: selectionBounds.x, end: selectionBounds.x + selectionBounds.width }
+    : null;
+  const verticalHighlight = selectionBounds
+    ? { start: selectionBounds.y, end: selectionBounds.y + selectionBounds.height }
+    : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -168,9 +188,30 @@ export default function App() {
               }}
             >
               <div style={{ background: '#fafafa', borderRight: '1px solid #ddd', borderBottom: '1px solid #ddd' }} />
-              <Ruler orientation="horizontal" lengthPx={activePage.width * ZOOM} />
-              <Ruler orientation="vertical" lengthPx={activePage.height * ZOOM} />
-              <PdfCanvas page={activePage} readOnly={isReadOnly} />
+              <Ruler orientation="horizontal" lengthPx={activePage.width * ZOOM} highlightRange={horizontalHighlight} />
+              <Ruler orientation="vertical" lengthPx={activePage.height * ZOOM} highlightRange={verticalHighlight} />
+              <div style={{ position: 'relative' }}>
+                <PdfCanvas page={activePage} readOnly={isReadOnly} />
+                {selectionBounds && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: selectionBounds.x,
+                      top: Math.max(0, selectionBounds.y - 20),
+                      background: '#1a1a1a',
+                      color: '#fff',
+                      fontSize: 11,
+                      padding: '2px 6px',
+                      borderRadius: 3,
+                      pointerEvents: 'none',
+                      whiteSpace: 'nowrap',
+                      zIndex: 10,
+                    }}
+                  >
+                    {Math.round(selectionBounds.x)}, {Math.round(selectionBounds.y)} · {Math.round(selectionBounds.width)} × {Math.round(selectionBounds.height)} pt
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <PdfCanvas page={activePage} readOnly={isReadOnly} />

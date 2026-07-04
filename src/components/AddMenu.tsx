@@ -4,37 +4,49 @@ import { useEditorStore } from '../store/editorStore';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 import type { PageObject } from '../types/document';
 
+const MENU_ID = 'add';
+
 export function AddMenu() {
-  const [open, setOpen] = useState(false);
+  const openMenuId = useEditorStore((s) => s.openMenuId);
+  const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
+  const open = openMenuId === MENU_ID;
+
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const { triggerImagePick, fileInputElement } = useImageAdd();
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const close = () => setOpenMenuId(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpenMenuId(null);
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, setOpenMenuId]);
 
   function handleImage() {
-    setOpen(false);
+    setOpenMenuId(null);
     triggerImagePick();
   }
 
   function handleTable() {
-    setOpen(false);
+    setOpenMenuId(null);
     setTableDialogOpen(true);
+  }
+
+  // Hovering only switches menus once one is already open by a click —
+  // hovering the bar with nothing open does nothing, matching native menu
+  // bars and Docs.
+  function handleMouseEnter() {
+    if (openMenuId !== null && openMenuId !== MENU_ID) setOpenMenuId(MENU_ID);
   }
 
   return (
     <>
-      <div style={{ position: 'relative', display: 'inline-block' }}>
-        <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+      <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
+        <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
           Add
         </button>
 
@@ -179,13 +191,15 @@ function TableDialog({ onClose }: { onClose: () => void }) {
           cornerRadius: 0,
         });
 
-        // Cell text (only create text object for every cell so it's editable)
+        // Cell text — positioned at cell origin with full cell height so
+        // empty cells have the same hit area as their background rect.
+        // Visual centering is handled by Fabric's own text baseline alignment.
         objects.push({
           id: nanoid(),
           type: 'text',
           tableId,
           x: cellX + 6,
-          y: y + (rowH - 14) / 2,
+          y,
           width: cellWidth - 12,
           height: rowH,
           rotation: 0,

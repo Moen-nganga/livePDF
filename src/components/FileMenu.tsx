@@ -4,6 +4,8 @@ import { api } from '../lib/api';
 import { ShareDialog } from './ShareDialog';
 import { NewDocumentDialog } from './NewDocumentDialog';
 
+const MENU_ID = 'file';
+
 /**
  * The File menu — a dropdown styled after Google Sheets' File menu, scoped
  * to just the actions this app actually supports: New, Make a copy,
@@ -12,7 +14,10 @@ import { NewDocumentDialog } from './NewDocumentDialog';
  * revision history in this app.)
  */
 export function FileMenu() {
-  const [open, setOpen] = useState(false);
+  const openMenuId = useEditorStore((s) => s.openMenuId);
+  const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
+  const open = openMenuId === MENU_ID;
+
   const [shareOpen, setShareOpen] = useState(false);
   const [newDocOpen, setNewDocOpen] = useState(false);
 
@@ -23,23 +28,23 @@ export function FileMenu() {
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const close = () => setOpenMenuId(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpenMenuId(null);
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, setOpenMenuId]);
 
   function handleNew() {
-    setOpen(false);
+    setOpenMenuId(null);
     setNewDocOpen(true);
   }
 
   async function handleMakeACopy() {
-    setOpen(false);
+    setOpenMenuId(null);
     const copy = copyDocument();
     if (!copy) return;
     try {
@@ -51,7 +56,7 @@ export function FileMenu() {
   }
 
   function handleRename() {
-    setOpen(false);
+    setOpenMenuId(null);
     if (!document) return;
     // Triggers the same inline, highlight-and-type editing as clicking the
     // title directly — see EditableTitle, which reads this same flag.
@@ -59,7 +64,7 @@ export function FileMenu() {
   }
 
   async function handleDelete() {
-    setOpen(false);
+    setOpenMenuId(null);
     if (!document) return;
     const ok = confirm(
       `Delete "${document.title}"? This cannot be undone.`
@@ -79,13 +84,20 @@ export function FileMenu() {
   }
 
   function handleShare() {
-    setOpen(false);
+    setOpenMenuId(null);
     setShareOpen(true);
   }
 
+  // Hovering only switches menus once one is already open by a click —
+  // hovering the bar with nothing open does nothing, matching native menu
+  // bars and Docs.
+  function handleMouseEnter() {
+    if (openMenuId !== null && openMenuId !== MENU_ID) setOpenMenuId(MENU_ID);
+  }
+
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+    <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
+      <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
         File
       </button>
 

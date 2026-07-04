@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from '../store/editorStore';
 
+const MENU_ID = 'view';
+
 /**
  * The View menu — Full screen and the page sidebar toggle so far. Scoped
  * down the same way EditMenu/FileMenu are: only what this app actually
@@ -15,7 +17,10 @@ import { useEditorStore } from '../store/editorStore';
  * only rendered for `isOwner` in App.tsx.
  */
 export function ViewMenu() {
-  const [open, setOpen] = useState(false);
+  const openMenuId = useEditorStore((s) => s.openMenuId);
+  const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
+  const open = openMenuId === MENU_ID;
+
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
 
   const isOwner = useEditorStore((s) => s.shareSession === null);
@@ -28,15 +33,15 @@ export function ViewMenu() {
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const close = () => setOpenMenuId(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpenMenuId(null);
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, setOpenMenuId]);
 
   // Fullscreen can be exited by the browser itself (Esc, its own UI chrome,
   // switching tabs on some platforms) without ever calling our handler, so
@@ -51,7 +56,7 @@ export function ViewMenu() {
   }, []);
 
   async function handleToggleFullscreen() {
-    setOpen(false);
+    setOpenMenuId(null);
 
     // Fullscreen the canvas area specifically (not the whole app) so the
     // menus/toolbar disappear and only the PDF itself fills the screen.
@@ -74,23 +79,30 @@ export function ViewMenu() {
   }
 
   function handleTogglePageSidebar() {
-    setOpen(false);
+    setOpenMenuId(null);
     setIsPageNavCollapsed(!isPageNavCollapsed);
   }
 
   function handleToggleRuler() {
-    setOpen(false);
+    setOpenMenuId(null);
     setShowRuler(!showRuler);
   }
 
   function handleToggleComments() {
-    setOpen(false);
+    setOpenMenuId(null);
     setShowComments(!showComments);
   }
 
+  // Hovering only switches menus once one is already open by a click —
+  // hovering the bar with nothing open does nothing, matching native menu
+  // bars and Docs.
+  function handleMouseEnter() {
+    if (openMenuId !== null && openMenuId !== MENU_ID) setOpenMenuId(MENU_ID);
+  }
+
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+    <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
+      <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
         View
       </button>
 

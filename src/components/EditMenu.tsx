@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useEditorStore } from '../store/editorStore';
+
+const MENU_ID = 'edit';
 
 /**
  * The Edit menu — Undo, Redo, and Delete (of the currently selected
@@ -8,7 +10,9 @@ import { useEditorStore } from '../store/editorStore';
  * concept), and Find & Replace was explicitly left out per the brief.
  */
 export function EditMenu() {
-  const [open, setOpen] = useState(false);
+  const openMenuId = useEditorStore((s) => s.openMenuId);
+  const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
+  const open = openMenuId === MENU_ID;
 
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
@@ -24,15 +28,15 @@ export function EditMenu() {
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const close = () => setOpenMenuId(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpenMenuId(null);
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, setOpenMenuId]);
 
   // Keyboard shortcuts work regardless of whether the menu is open,
   // matching how Ctrl+Z/Ctrl+Y behave in every editor that has them —
@@ -59,24 +63,31 @@ export function EditMenu() {
   }, [undo, redo]);
 
   function handleUndo() {
-    setOpen(false);
+    setOpenMenuId(null);
     undo();
   }
 
   function handleRedo() {
-    setOpen(false);
+    setOpenMenuId(null);
     redo();
   }
 
   function handleDelete() {
-    setOpen(false);
+    setOpenMenuId(null);
     if (!activePage || !selectedObjectId) return;
     removeObject(activePage.id, selectedObjectId);
   }
 
+  // Hovering only switches menus once one is already open by a click —
+  // hovering the bar with nothing open does nothing, matching native menu
+  // bars and Docs.
+  function handleMouseEnter() {
+    if (openMenuId !== null && openMenuId !== MENU_ID) setOpenMenuId(MENU_ID);
+  }
+
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+    <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
+      <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
         Edit
       </button>
 

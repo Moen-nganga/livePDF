@@ -25,6 +25,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   const updateObject = useEditorStore((s) => s.updateObject);
   const removeObject = useEditorStore((s) => s.removeObject);
   const setSelectedObjectId = useEditorStore((s) => s.setSelectedObjectId);
+  const setLiveObjectBounds = useEditorStore((s) => s.setLiveObjectBounds);
 
   // Set up the Fabric canvas once per page. We deliberately do NOT let
   // React render the <canvas> element itself (no JSX <canvas> below).
@@ -55,11 +56,33 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     canvas.on('selection:created', (e) => {
       const obj = e.selected?.[0] as (fabric.Object & { id?: string }) | undefined;
       setSelectedObjectId(obj?.id ?? null);
+      // Use canvas.getActiveObject() rather than e.selected[0] here — for a
+      // multi-object ActiveSelection (table cells), that's the wrapper with
+      // the correct aggregate left/top/width/height for the whole
+      // selection, not just the first cell.
+      const active = canvas.getActiveObject();
+      setLiveObjectBounds(active ? getObjectBounds(active) : null);
     });
-    canvas.on('selection:cleared', () => setSelectedObjectId(null));
+    canvas.on('selection:cleared', () => {
+      setSelectedObjectId(null);
+      setLiveObjectBounds(null);
+    });
+
+    // Fires continuously while dragging (unlike object:modified, which only
+    // fires once on mouse-up) — this is what makes the ruler highlight and
+    // position/size readout track the object live instead of only updating
+    // after it's dropped.
+    canvas.on('object:moving', (e) => {
+      setLiveObjectBounds(getObjectBounds(e.target));
+    });
 
     canvas.on('object:modified', (e) => {
       const target = e.target as fabric.Object & { id?: string };
+
+      // Refresh the bounds one more time on commit — object:moving fires
+      // right up until mouse-up, but a resize (as opposed to a drag) can
+      // finalize scaleX/scaleY in a way that's only fully settled here.
+      setLiveObjectBounds(getObjectBounds(target));
 
       // ActiveSelection is Fabric's multi-select wrapper — it's created
       // when we group-select all cells of a table. On drag-end, each
@@ -410,6 +433,22 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.15)', background: '#fff' }}
     />
   );
+}
+
+/**
+ * Reads a Fabric object's (or ActiveSelection's — same shape) current
+ * on-canvas bounding box. Used to feed the ruler's alignment highlight and
+ * the position/size readout badge in App.tsx; kept as a plain function
+ * rather than inline so both the live 'object:moving' handler and the
+ * one-shot selection/modified handlers compute bounds identically.
+ */
+function getObjectBounds(obj: fabric.Object) {
+  return {
+    x: obj.left ?? 0,
+    y: obj.top ?? 0,
+    width: (obj.width ?? 0) * (obj.scaleX ?? 1),
+    height: (obj.height ?? 0) * (obj.scaleY ?? 1),
+  };
 }
 
 function createFabricObject(obj: PageObject): fabric.Object | null {
