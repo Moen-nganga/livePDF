@@ -3,31 +3,36 @@
 @import url('https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 
 :root {
-  --color-bg: #f0f2f5;
+  /* ── Palette: warm white + deep signal red ─────────────── */
+  --color-bg: #faf7f6;
   --color-surface: #ffffff;
-  --color-border: #dadce0;
-  --color-border-strong: #bdc1c6;
-  --color-sidebar-border: #c4c7ce;
-  --color-text: #202124;
-  --color-text-secondary: #5f6368;
-  --color-text-muted: #9aa0a6;
-  --color-accent: #1a73e8;
-  --color-accent-hover: #1558b0;
-  --color-accent-bg: #e8f0fe;
-  --color-accent-bg-hover: #d2e3fc;
-  --color-danger: #d93025;
-  --color-danger-bg: #fce8e6;
-  --color-success: #188038;
-  --color-warning-bg: #fef7e0;
-  --color-warning-text: #b06000;
+  --color-border: #ece4e3;
+  --color-border-strong: #d9caca;
+  --color-sidebar-border: #e3d3d3;
+  --color-text: #241a1a;
+  --color-text-secondary: #6b5c5c;
+  --color-text-muted: #a8989a;
+
+  --color-accent: #b3122a;
+  --color-accent-hover: #8f0e22;
+  --color-accent-bg: #fdeaec;
+  --color-accent-bg-hover: #fbd4d8;
+
+  /* danger gets its own lane (amber) so it never gets lost against the red brand color */
+  --color-danger: #b3541a;
+  --color-danger-bg: #fdf1e6;
+  --color-success: #1f7a3f;
+  --color-warning-bg: #fdf1e6;
+  --color-warning-text: #8a4a12;
 
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-pill: 20px;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.14), 0 4px 8px rgba(0, 0, 0, 0.08);
-  --shadow-header: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 1px 3px rgba(46, 10, 15, 0.08), 0 1px 2px rgba(46, 10, 15, 0.05);
+  --shadow-md: 0 4px 10px rgba(46, 10, 15, 0.10), 0 1px 3px rgba(46, 10, 15, 0.07);
+  --shadow-lg: 0 16px 32px rgba(46, 10, 15, 0.16), 0 4px 10px rgba(46, 10, 15, 0.08);
+  --shadow-header: 0 2px 8px rgba(46, 10, 15, 0.07);
+  --shadow-accent-glow: 0 4px 14px rgba(179, 18, 42, 0.30);
 
   --font-family: 'Rubik', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
@@ -66,18 +71,19 @@ button {
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
-    box-shadow 0.15s ease;
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
   white-space: nowrap;
 }
 
 button:hover:not(:disabled) {
-  background: #f1f3f4;
+  background: #fbf5f5;
   border-color: var(--color-border-strong);
   box-shadow: var(--shadow-sm);
 }
 
 button:active:not(:disabled) {
-  background: #e8eaed;
+  background: #f5e9e9;
   box-shadow: none;
   transform: translateY(1px);
 }
@@ -103,7 +109,7 @@ select:focus,
 input:focus {
   outline: none;
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.18);
+  box-shadow: 0 0 0 2px rgba(179, 18, 42, 0.16);
 }
 
 /* ─── App shell layout ──────────────────────────────────── */
@@ -148,19 +154,20 @@ input:focus {
 /* ─── Accent / action buttons ───────────────────────────── */
 
 .btn-accent {
-  background: var(--color-accent);
+  background: linear-gradient(180deg, #c41930 0%, var(--color-accent) 100%);
   border-color: var(--color-accent);
   color: #ffffff;
   border-radius: var(--radius-pill);
   padding: 7px 18px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  box-shadow: var(--shadow-accent-glow);
 }
 
 .btn-accent:hover:not(:disabled) {
-  background: var(--color-accent-hover);
+  background: linear-gradient(180deg, #a80f24 0%, var(--color-accent-hover) 100%);
   border-color: var(--color-accent-hover);
-  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.35);
+  box-shadow: 0 6px 16px rgba(179, 18, 42, 0.4);
 }
 
 .btn-danger-text {
@@ -185,7 +192,7 @@ input:focus {
 }
 
 .badge-success {
-  background: #e6f4ea;
+  background: #e5f3ea;
   color: var(--color-success);
 }
 

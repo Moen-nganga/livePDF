@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import type { PageObject, TextObject, RectObject } from '../types/document';
-import { WEB_SAFE_FONTS, FONT_SIZES } from '../lib/fonts';
+import { WEB_SAFE_FONTS } from '../lib/fonts';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
@@ -225,7 +225,7 @@ export function Toolbar() {
         ))}
       </select>
 
-      <FontSizeStepper
+      <FontSizeDropdown
         value={selectedText?.fontSize}
         disabled={!selectedText}
         onChange={(size) => updateSelectedText({ fontSize: size })}
@@ -684,51 +684,41 @@ function Divider() {
   return <div style={{ width: 1, background: 'var(--color-border)', margin: '2px 4px' }} />;
 }
 
-interface FontSizeStepperProps {
+// Fixed list, 1–18 — replaces the old −/+ stepper. Deliberately NOT
+// derived from lib/fonts.ts's FONT_SIZES (that preset list goes well
+// beyond 18, e.g. 24/36/48 for headings) since the requirement here is
+// specifically this narrower 1–18 range, picker-only, no custom typing.
+const FONT_SIZE_OPTIONS = Array.from({ length: 18 }, (_, i) => i + 1);
+
+interface FontSizeDropdownProps {
   value: number | undefined;
   disabled: boolean;
   onChange: (size: number) => void;
 }
 
-/**
- * Mirrors the −  [number]  + control from the reference screenshot. Typing
- * a custom value directly into the number field is also supported, not
- * just stepping through the preset list, since locking people into only
- * the preset sizes is more restrictive than the reference UI actually is.
- */
-function FontSizeStepper({ value, disabled, onChange }: FontSizeStepperProps) {
-  function step(direction: 1 | -1) {
-    if (value === undefined) return;
-    const sizes = FONT_SIZES as readonly number[];
-    const currentIndex = sizes.indexOf(value);
-    if (currentIndex === -1) {
-      // Custom value not in the preset list — just nudge by 1 instead of
-      // jumping to a preset, so stepping feels predictable either way.
-      onChange(Math.max(1, value + direction));
-      return;
-    }
-    const nextIndex = Math.min(sizes.length - 1, Math.max(0, currentIndex + direction));
-    onChange(sizes[nextIndex]);
-  }
-
+function FontSizeDropdown({ value, disabled, onChange }: FontSizeDropdownProps) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-      <button onClick={() => step(-1)} disabled={disabled} title="Decrease font size" style={{ width: 28 }}>
-        −
-      </button>
-      <input
-        type="number"
-        value={value ?? ''}
-        disabled={disabled}
-        onChange={(e) => {
-          const next = Number(e.target.value);
-          if (!Number.isNaN(next) && next > 0) onChange(next);
-        }}
-        style={{ width: 44, textAlign: 'center' }}
-      />
-      <button onClick={() => step(1)} disabled={disabled} title="Increase font size" style={{ width: 28 }}>
-        +
-      </button>
-    </div>
+    <select
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={(e) => onChange(Number(e.target.value))}
+      title={disabled ? 'Select a text box to change its font size' : 'Font size'}
+      style={{ width: 56 }}
+    >
+      {/* Shown when nothing's selected, or if a document has a stored
+          size outside 1–18 (e.g. from before this dropdown existed) —
+          without this, the <select> would silently fall back to
+          whichever option happens to be first. */}
+      {(!value || value < 1 || value > 18) && (
+        <option value="" disabled hidden>
+          {value ?? 'Size'}
+        </option>
+      )}
+      {FONT_SIZE_OPTIONS.map((size) => (
+        <option key={size} value={size}>
+          {size}
+        </option>
+      ))}
+    </select>
   );
 }
