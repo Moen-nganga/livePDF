@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import type { PageObject, TextObject, RectObject } from '../types/document';
 import { WEB_SAFE_FONTS } from '../lib/fonts';
+import { findMisspellings } from '../lib/spellcheck';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
@@ -21,6 +22,11 @@ export function Toolbar() {
   const addObject = useEditorStore((s) => s.addObject);
   const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
   const updateObject = useEditorStore((s) => s.updateObject);
+  const spellErrorsByObjectId = useEditorStore((s) => s.spellErrorsByObjectId);
+  const setSpellErrorsByObjectId = useEditorStore((s) => s.setSpellErrorsByObjectId);
+  const clearSpellErrors = useEditorStore((s) => s.clearSpellErrors);
+  const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
+  const setTextPlacementActive = useEditorStore((s) => s.setTextPlacementActive);
   const { triggerImagePick, fileInputElement } = useImageAdd();
 
   const activePage = document?.pages[activePageIndex];
@@ -93,27 +99,15 @@ export function Toolbar() {
     updateObject(activePage.id, selectedObject.id, { rotation: next });
   }
 
+  // Doesn't create a real text object at all — clicking "+ Text" just
+  // arms placement mode. PdfCanvas.tsx owns the actual placeholder
+  // rectangle (drag/resize via Fabric's normal handles) and creates the
+  // real, empty TextObject only once the user double-clicks it to commit.
+  // No placeholder copy is ever inserted — the committed object's text is
+  // '', and its font size is always 14 regardless of how big the
+  // rectangle was drawn; only a manual font-size change afterward alters it.
   function addText() {
-    if (!activePage) return;
-    const { x, y } = nextOffset(activePage.objects.length);
-    const obj: PageObject = {
-      id: nanoid(),
-      type: 'text',
-      x,
-      y,
-      width: 200,
-      height: 40,
-      ...baseDefaults,
-      text: 'Edit this text',
-      fontSize: 18,
-      fontFamily: 'Helvetica',
-      color: '#111111',
-      bold: false,
-      italic: false,
-      strikethrough: false,
-      align: 'left',
-    };
-    addObject(activePage.id, obj);
+    setTextPlacementActive(true);
   }
 
   function addRect() {
@@ -265,6 +259,31 @@ export function Toolbar() {
     setWatermarkDialogOpen(false);
   }
 
+  const [checking, setChecking] = useState(false);
+  const totalSpellErrors = Object.values(spellErrorsByObjectId).reduce((sum, arr) => sum + arr.length, 0);
+
+  // Scans the WHOLE document (every page, not just the active one) — the
+  // results are stored by object id, so switching pages afterward still
+  // shows the right underlines on each page as PdfCanvas mounts it, without
+  // needing to re-scan.
+  function runSpellCheck() {
+    if (!document) return;
+    setChecking(true);
+    try {
+      const errors: Record<string, ReturnType<typeof findMisspellings>> = {};
+      for (const page of document.pages) {
+        for (const obj of page.objects) {
+          if (obj.type !== 'text') continue;
+          const found = findMisspellings(obj.text);
+          if (found.length > 0) errors[obj.id] = found;
+        }
+      }
+      setSpellErrorsByObjectId(errors);
+    } finally {
+      setChecking(false);
+    }
+  }
+
   function activeToolStyle(tool: NonNullable<typeof activeTool>): React.CSSProperties {
     return activeTool === tool
       ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
@@ -282,7 +301,14 @@ export function Toolbar() {
         flexWrap: 'wrap',
       }}
     >
-      <button onClick={addText} style={activeToolStyle('text')}>
+      <button
+        onClick={addText}
+        style={
+          activeTool === 'text' || textPlacementActive
+            ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
+            : {}
+        }
+      >
         + Text
       </button>
       <button onClick={addRect} style={activeToolStyle('rect')}>
@@ -338,6 +364,24 @@ export function Toolbar() {
       <button onClick={() => setWatermarkDialogOpen(true)} title="Add a diagonal watermark to the current page">
         + Watermark
       </button>
+
+      <button
+        onClick={runSpellCheck}
+        disabled={checking}
+        title="Scan the entire document for possible spelling errors"
+      >
+        {checking ? 'Checking…' : 'Spell Check'}
+      </button>
+      {totalSpellErrors > 0 && (
+        <>
+          <span style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+            {totalSpellErrors} possible {totalSpellErrors === 1 ? 'issue' : 'issues'}
+          </span>
+          <button onClick={clearSpellErrors} title="Clear spell-check underlines" style={{ width: 24 }}>
+            ✕
+          </button>
+        </>
+      )}
 
       <Divider />
 
