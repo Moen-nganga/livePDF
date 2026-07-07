@@ -58,15 +58,6 @@ interface EditorState {
   openMenuId: string | null;
   setOpenMenuId: (id: string | null) => void;
 
-  // Results of the last "Spell Check" scan, keyed by TextObject id. Purely
-  // an editor-side visual aid (see lib/spellcheck.ts) — never saved to the
-  // document, never exported/printed, and not undoable. Toolbar.tsx
-  // populates this on scan; PdfCanvas.tsx reads it to draw red underlines
-  // under the flagged words on whichever page is currently mounted.
-  spellErrorsByObjectId: Record<string, { start: number; end: number; word: string }[]>;
-  setSpellErrorsByObjectId: (errors: Record<string, { start: number; end: number; word: string }[]>) => void;
-  clearSpellErrors: () => void;
-
   // Whether the "+ Text" placement rectangle is currently active on the
   // canvas — set by Toolbar.tsx's "+ Text" button, read by PdfCanvas.tsx,
   // which owns the actual placeholder rectangle and its drag/resize/
@@ -172,9 +163,6 @@ export const useEditorStore = create<EditorState>((set, get) => {
     setLiveObjectBounds: (bounds) => set({ liveObjectBounds: bounds }),
     openMenuId: null,
     setOpenMenuId: (id) => set({ openMenuId: id }),
-    spellErrorsByObjectId: {},
-    setSpellErrorsByObjectId: (errors) => set({ spellErrorsByObjectId: errors }),
-    clearSpellErrors: () => set({ spellErrorsByObjectId: {} }),
     textPlacementActive: false,
     setTextPlacementActive: (active) => set({ textPlacementActive: active }),
     history: { past: [], future: [] },
