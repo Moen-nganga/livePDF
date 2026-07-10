@@ -10,13 +10,16 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.21.0",
-    "nanoid": "^5.0.7"
+    "nanoid": "^5.0.7",
+    "resend": "^6.17.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "tsx": "^4.19.0",

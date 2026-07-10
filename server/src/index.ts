@@ -1,13 +1,27 @@
 import 'dotenv/config';
-console.log('DATABASE_URL loaded?', process.env.DATABASE_URL ? 'yes, starts with: ' + process.env.DATABASE_URL.slice(0, 25) : 'NO — undefined');
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { nanoid } from 'nanoid';
 import { documentsRepo, sharesRepo, initDb } from './db.js';
+import { authRouter } from './auth.js';
 
 const app = express();
-app.use(cors());
+
+// credentials: true is required for the session cookie to be sent/received
+// cross-origin (frontend on a different port/domain than this API). Once
+// credentials are enabled, cors() can no longer reflect origin: '*' — it
+// must be an explicit origin, hence CLIENT_URL below.
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL ?? 'http://localhost:5173',
+    credentials: true,
+  })
+);
+app.use(cookieParser());
 app.use(express.json({ limit: '25mb' })); // generous: documents embed base64 images
+
+app.use('/api/auth', authRouter);
 
 function requireDeviceId(req: express.Request, res: express.Response): string | null {
   const deviceId = req.header('x-device-id');
