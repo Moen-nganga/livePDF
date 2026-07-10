@@ -1,7 +1,9 @@
+import 'dotenv/config';
+console.log('DATABASE_URL loaded?', process.env.DATABASE_URL ? 'yes, starts with: ' + process.env.DATABASE_URL.slice(0, 25) : 'NO — undefined');
 import express from 'express';
 import cors from 'cors';
 import { nanoid } from 'nanoid';
-import { documentsRepo, sharesRepo } from './db.js';
+import { documentsRepo, sharesRepo, initDb } from './db.js';
 
 const app = express();
 app.use(cors());
@@ -17,10 +19,10 @@ function requireDeviceId(req: express.Request, res: express.Response): string | 
 }
 
 // List documents for the current device (metadata only, not full content)
-app.get('/api/documents', (req, res) => {
+app.get('/api/documents', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
-  const rows = documentsRepo.listForDevice(deviceId);
+  const rows = await documentsRepo.listForDevice(deviceId);
   res.json(rows.map((r) => ({
     id: r.id,
     title: r.title,
@@ -30,16 +32,16 @@ app.get('/api/documents', (req, res) => {
 });
 
 // Fetch one full document
-app.get('/api/documents/:id', (req, res) => {
+app.get('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
-  const row = documentsRepo.get(req.params.id, deviceId);
+  const row = await documentsRepo.get(req.params.id, deviceId);
   if (!row) return res.status(404).json({ error: 'Not found' });
   res.json(JSON.parse(row.data));
 });
 
 // Create or update (auto-save calls this repeatedly with the same id)
-app.put('/api/documents/:id', (req, res) => {
+app.put('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
   const doc = req.body;
@@ -47,7 +49,7 @@ app.put('/api/documents/:id', (req, res) => {
     return res.status(400).json({ error: 'Invalid document body' });
   }
   const now = Date.now();
-  documentsRepo.upsert({
+  await documentsRepo.upsert({
     id: req.params.id,
     device_id: deviceId,
     title: doc.title ?? 'Untitled document',
@@ -58,10 +60,10 @@ app.put('/api/documents/:id', (req, res) => {
   res.json({ ok: true, updatedAt: now });
 });
 
-app.delete('/api/documents/:id', (req, res) => {
+app.delete('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
-  documentsRepo.remove(req.params.id, deviceId);
+  await documentsRepo.remove(req.params.id, deviceId);
   res.json({ ok: true });
 });
 
@@ -76,11 +78,11 @@ app.post('/api/documents', (req, res) => {
 // Only the owning device can mint new share tokens for a document —
 // otherwise anyone with a view link could create their own edit link
 // for the same doc, defeating the point of choosing an access level.
-app.post('/api/documents/:id/shares', (req, res) => {
+app.post('/api/documents/:id/shares', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
 
-  const owned = documentsRepo.get(req.params.id, deviceId);
+  const owned = await documentsRepo.get(req.params.id, deviceId);
   if (!owned) return res.status(404).json({ error: 'Not found' });
 
   const access = req.body?.access;
@@ -89,7 +91,7 @@ app.post('/api/documents/:id/shares', (req, res) => {
   }
 
   const token = nanoid(21); // longer than the default device/document ids — this token IS the credential
-  sharesRepo.create({
+  await sharesRepo.create({
     token,
     document_id: req.params.id,
     access,
@@ -98,33 +100,33 @@ app.post('/api/documents/:id/shares', (req, res) => {
   res.json({ token, access });
 });
 
-app.get('/api/documents/:id/shares', (req, res) => {
+app.get('/api/documents/:id/shares', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
-  const owned = documentsRepo.get(req.params.id, deviceId);
+  const owned = await documentsRepo.get(req.params.id, deviceId);
   if (!owned) return res.status(404).json({ error: 'Not found' });
-  const shares = sharesRepo.listForDocument(req.params.id);
+  const shares = await sharesRepo.listForDocument(req.params.id);
   res.json(shares.map((s) => ({ token: s.token, access: s.access, createdAt: s.created_at })));
 });
 
-app.delete('/api/shares/:token', (req, res) => {
+app.delete('/api/shares/:token', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
-  const share = sharesRepo.getByToken(req.params.token);
+  const share = await sharesRepo.getByToken(req.params.token);
   if (!share) return res.json({ ok: true }); // already gone, nothing to do
-  const owned = documentsRepo.get(share.document_id, deviceId);
+  const owned = await documentsRepo.get(share.document_id, deviceId);
   if (!owned) return res.status(403).json({ error: 'Not the owner of this share' });
-  sharesRepo.revoke(req.params.token);
+  await sharesRepo.revoke(req.params.token);
   res.json({ ok: true });
 });
 
 // Resolve a share token to its document — no device id required, since
 // the token itself grants access. This is the route a recipient's browser
 // calls when opening a shared link.
-app.get('/api/shared/:token', (req, res) => {
-  const share = sharesRepo.getByToken(req.params.token);
+app.get('/api/shared/:token', async (req, res) => {
+  const share = await sharesRepo.getByToken(req.params.token);
   if (!share) return res.status(404).json({ error: 'This share link is invalid or has been revoked' });
-  const doc = documentsRepo.getById(share.document_id);
+  const doc = await documentsRepo.getById(share.document_id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
   res.json({ document: JSON.parse(doc.data), access: share.access });
 });
@@ -132,13 +134,13 @@ app.get('/api/shared/:token', (req, res) => {
 // Save via a share token — only valid for 'edit' tokens. A 'view' token
 // hitting this route is rejected even though it successfully resolved the
 // GET above, since read access and write access are different grants.
-app.put('/api/shared/:token', (req, res) => {
-  const share = sharesRepo.getByToken(req.params.token);
+app.put('/api/shared/:token', async (req, res) => {
+  const share = await sharesRepo.getByToken(req.params.token);
   if (!share) return res.status(404).json({ error: 'This share link is invalid or has been revoked' });
   if (share.access !== 'edit') {
     return res.status(403).json({ error: 'This link is view-only' });
   }
-  const doc = documentsRepo.getById(share.document_id);
+  const doc = await documentsRepo.getById(share.document_id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
 
   const body = req.body;
@@ -146,7 +148,7 @@ app.put('/api/shared/:token', (req, res) => {
     return res.status(400).json({ error: 'Invalid document body' });
   }
   const now = Date.now();
-  documentsRepo.upsert({
+  await documentsRepo.upsert({
     id: doc.id,
     device_id: doc.device_id, // preserve original owner, the editor via link doesn't become the owner
     title: body.title ?? doc.title,
@@ -158,6 +160,16 @@ app.put('/api/shared/:token', (req, res) => {
 });
 
 const port = process.env.PORT ? Number(process.env.PORT) : 8787;
-app.listen(port, () => {
-  console.log(`PDF editor API listening on http://localhost:${port}`);
-});
+
+// Table creation is async now (pg, unlike better-sqlite3, has no synchronous
+// exec), so the server only starts listening once the schema is confirmed ready.
+initDb()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`PDF editor API listening on http://localhost:${port}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to initialize database:', err);
+    process.exit(1);
+  });
