@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from './store/editorStore';
+import { useAuthStore } from './store/authStore';
 import { useAutoSave } from './hooks/useAutoSave';
 import { cacheDocumentForOffline } from './lib/offlineCache';
 import { api } from './lib/api';
@@ -14,6 +15,7 @@ import { PageNav } from './components/PageNav';
 import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
+import { LoginDialog } from './components/LoginDialog';
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -37,10 +39,24 @@ export default function App() {
   const shareSession = useEditorStore((s) => s.shareSession);
   const setShareSession = useEditorStore((s) => s.setShareSession);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+
+  const authUser = useAuthStore((s) => s.user);
+  const authStatus = useAuthStore((s) => s.status);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const verifyToken = useAuthStore((s) => s.verifyToken);
+  const logout = useAuthStore((s) => s.logout);
+  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
   const shareToken = new URLSearchParams(window.location.search).get('share');
-  const [showLanding, setShowLanding] = useState(!shareToken);
+  // A magic-link redirect lands here as ?token=xxx (see auth.ts's
+  // request-link route, which builds the link as `${APP_URL}/auth/verify?token=...`
+  // — there's no react-router in this app, so "verify" isn't a real route,
+  // just a query param this component checks for on load, same as `share`).
+  const verifyTokenParam = new URLSearchParams(window.location.search).get('token');
+  const [verifying, setVerifying] = useState(!!verifyTokenParam);
+  const [showLanding, setShowLanding] = useState(!shareToken && !verifyTokenParam);
   const online = useOnlineStatus();
   const saveStatus = useAutoSave();
 
@@ -55,6 +71,32 @@ export default function App() {
         // Offline support is a nice-to-have, not load-bearing — fail silently
       });
     }
+  }, []);
+
+  // Check for an existing session on load (skipped entirely if we're about
+  // to consume a magic-link token below — that flow sets the user directly).
+  useEffect(() => {
+    if (!verifyTokenParam) fetchMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Consume a magic-link token from the URL, then strip it so a refresh
+  // doesn't try to re-verify an already-used (and now invalid) token.
+  useEffect(() => {
+    if (!verifyTokenParam) return;
+
+    (async () => {
+      const result = await verifyToken(verifyTokenParam);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+      if (!result.ok) {
+        alert(result.error ?? 'This sign-in link is invalid or has expired.');
+      }
+      setVerifying(false);
+      setShowLanding(!shareToken);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // On first load: if a share token is present in the URL, resolve it and
@@ -81,6 +123,10 @@ export default function App() {
   useEffect(() => {
     if (document) cacheDocumentForOffline(document);
   }, [document]);
+
+  if (verifying) {
+    return <div style={{ padding: 24 }}>Signing you in…</div>;
+  }
 
   // Show landing screen on fresh loads (not share links) — must come before
   // the document null-check below, since no document is loaded yet at this
@@ -130,12 +176,22 @@ export default function App() {
           <button className="btn-accent" onClick={() => setDownloadDialogOpen(true)}>
             Download PDF
           </button>
+          {authStatus === 'authenticated' && authUser ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{authUser.email}</span>
+              <button onClick={() => logout()}>Sign out</button>
+            </div>
+          ) : (
+            <button onClick={() => setLoginDialogOpen(true)}>Sign in</button>
+          )}
         </div>
       </header>
 
       {downloadDialogOpen && document && (
         <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
       )}
+
+      {loginDialogOpen && <LoginDialog onClose={() => setLoginDialogOpen(false)} />}
 
       {!isReadOnly && <Toolbar />}
 

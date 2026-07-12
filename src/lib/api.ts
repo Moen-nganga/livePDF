@@ -23,6 +23,11 @@ export interface ShareInfo {
   createdAt?: number;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+}
+
 export const api = {
   async listDocuments(): Promise<DocumentSummary[]> {
     const res = await fetch(`${API_BASE}/api/documents`, { headers: headers() });
@@ -92,5 +97,45 @@ export const api = {
       body: JSON.stringify(doc),
     });
     if (!res.ok) throw new Error('Failed to save — this link may be view-only');
+  },
+
+  // --- Auth ---
+  // These use credentials: 'include' (not the X-Device-Id header pattern
+  // above) since auth relies on an httpOnly session cookie, not a device id.
+
+  async requestMagicLink(email: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/auth/request-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'Failed to send sign-in link');
+  },
+
+  // Passes the current device's id so the server can attach this device's
+  // existing anonymous documents to the now-known user.
+  async verifyMagicLink(token: string): Promise<AuthUser> {
+    const res = await fetch(`${API_BASE}/api/auth/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ token, deviceId: getDeviceId() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'This link is invalid or has expired');
+    return data.user;
+  },
+
+  async getMe(): Promise<AuthUser | null> {
+    const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.user;
+  },
+
+  async logout(): Promise<void> {
+    await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
   },
 };

@@ -89,7 +89,7 @@ authRouter.post('/request-link', async (req, res) => {
     used: false,
   });
 
-  const link = `${APP_URL}/auth/verify?token=${token}`;
+  const link = `${APP_URL}/?token=${token}`;
 
   try {
     await sendMagicLinkEmail(normalizedEmail, link);

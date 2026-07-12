@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
+import { useAuthStore } from '../store/authStore';
 import { TEMPLATES, type TemplateDefinition } from '../lib/templates';
 import { api, type DocumentSummary } from '../lib/api';
+import { LoginDialog } from './LoginDialog';
 
 interface Props {
   onEnter: () => void;
@@ -14,11 +16,26 @@ export function LandingScreen({ onEnter }: Props) {
   const [loadingRecent, setLoadingRecent] = useState(true);
   const [creating, setCreating] = useState<string | null>(null);
 
+  const authUser = useAuthStore((s) => s.user);
+  const authStatus = useAuthStore((s) => s.status);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const logout = useAuthStore((s) => s.logout);
+  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+
   useEffect(() => {
     api.listDocuments()
       .then((docs) => setRecent(docs.slice(0, 6)))
       .catch(() => setRecent([]))
       .finally(() => setLoadingRecent(false));
+  }, []);
+
+  // The landing screen can be the very first thing a user sees, so check
+  // session status here too — App.tsx's own fetchMe() call covers the case
+  // where a document is already open, but that effect doesn't run before
+  // this component mounts if the app boots straight into the landing screen.
+  useEffect(() => {
+    if (authStatus === 'idle') fetchMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function openTemplate(template: TemplateDefinition) {
@@ -100,10 +117,48 @@ export function LandingScreen({ onEnter }: Props) {
             </div>
           </div>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-          Your documents are saved automatically
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+            Your documents are saved automatically
+          </div>
+          {authStatus === 'authenticated' && authUser ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{authUser.email}</span>
+              <button
+                onClick={() => logout()}
+                style={{
+                  fontSize: 12,
+                  padding: '6px 14px',
+                  borderRadius: 20,
+                  border: '1.5px solid var(--color-border)',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setLoginDialogOpen(true)}
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                padding: '6px 16px',
+                borderRadius: 20,
+                border: '1.5px solid var(--color-accent)',
+                background: 'transparent',
+                color: 'var(--color-accent)',
+                cursor: 'pointer',
+              }}
+            >
+              Sign in
+            </button>
+          )}
         </div>
       </header>
+
+      {loginDialogOpen && <LoginDialog onClose={() => setLoginDialogOpen(false)} />}
 
       {/* ── Main content ───────────────────────────────── */}
       <div style={{ maxWidth: 1020, margin: '0 auto', padding: '44px 28px 100px' }}>
