@@ -4,7 +4,7 @@ import { useEditorStore } from '../store/editorStore';
 import { useAuthStore } from '../store/authStore';
 import { TEMPLATES, type TemplateDefinition } from '../lib/templates';
 import { api, type DocumentSummary } from '../lib/api';
-import { LoginDialog } from './LoginDialog';
+import { AuthScreen } from './AuthScreen';
 
 interface Props {
   onEnter: () => void;
@@ -20,7 +20,7 @@ export function LandingScreen({ onEnter }: Props) {
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
   const logout = useAuthStore((s) => s.logout);
-  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const [showAuthScreen, setShowAuthScreen] = useState(false);
 
   useEffect(() => {
     api.listDocuments()
@@ -77,6 +77,10 @@ export function LandingScreen({ onEnter }: Props) {
       alert('Could not open that document. It may have been deleted.');
       setRecent((r) => r.filter((d) => d.id !== summary.id));
     }
+  }
+
+  if (showAuthScreen) {
+    return <AuthScreen onBack={() => setShowAuthScreen(false)} />;
   }
 
   return (
@@ -140,7 +144,7 @@ export function LandingScreen({ onEnter }: Props) {
             </div>
           ) : (
             <button
-              onClick={() => setLoginDialogOpen(true)}
+              onClick={() => setShowAuthScreen(true)}
               style={{
                 fontSize: 12,
                 fontWeight: 500,
@@ -157,8 +161,6 @@ export function LandingScreen({ onEnter }: Props) {
           )}
         </div>
       </header>
-
-      {loginDialogOpen && <LoginDialog onClose={() => setLoginDialogOpen(false)} />}
 
       {/* ── Main content ───────────────────────────────── */}
       <div style={{ maxWidth: 1020, margin: '0 auto', padding: '44px 28px 100px' }}>

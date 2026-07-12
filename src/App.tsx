@@ -15,7 +15,7 @@ import { PageNav } from './components/PageNav';
 import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
-import { LoginDialog } from './components/LoginDialog';
+import { AuthScreen } from './components/AuthScreen';
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -45,7 +45,7 @@ export default function App() {
   const fetchMe = useAuthStore((s) => s.fetchMe);
   const verifyToken = useAuthStore((s) => s.verifyToken);
   const logout = useAuthStore((s) => s.logout);
-  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const [showAuthScreen, setShowAuthScreen] = useState(false);
 
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
@@ -128,6 +128,10 @@ export default function App() {
     return <div style={{ padding: 24 }}>Signing you in…</div>;
   }
 
+  if (showAuthScreen) {
+    return <AuthScreen onBack={() => setShowAuthScreen(false)} />;
+  }
+
   // Show landing screen on fresh loads (not share links) — must come before
   // the document null-check below, since no document is loaded yet at this
   // point (the user will pick one from the landing screen).
@@ -182,7 +186,7 @@ export default function App() {
               <button onClick={() => logout()}>Sign out</button>
             </div>
           ) : (
-            <button onClick={() => setLoginDialogOpen(true)}>Sign in</button>
+            <button onClick={() => setShowAuthScreen(true)}>Sign in</button>
           )}
         </div>
       </header>
@@ -190,8 +194,6 @@ export default function App() {
       {downloadDialogOpen && document && (
         <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
       )}
-
-      {loginDialogOpen && <LoginDialog onClose={() => setLoginDialogOpen(false)} />}
 
       {!isReadOnly && <Toolbar />}
 
