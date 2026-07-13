@@ -3,15 +3,15 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { nanoid } from 'nanoid';
-import { documentsRepo, sharesRepo, initDb } from './db.js';
-import { authRouter } from './auth.js';
+import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
+import { authRouter, requireAuth } from './auth.js';
+import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
+import { createBinanceOrder, verifyBinanceWebhookSignature, handleBinanceWebhookEvent } from './binancePay.js';
+import { usersRepo } from './db.js';
+import type { PlanId } from './plans.js';
 
 const app = express();
 
-// credentials: true is required for the session cookie to be sent/received
-// cross-origin (frontend on a different port/domain than this API). Once
-// credentials are enabled, cors() can no longer reflect origin: '*' — it
-// must be an explicit origin, hence CLIENT_URL below.
 app.use(
   cors({
     origin: process.env.CLIENT_URL ?? 'http://localhost:5173',
@@ -19,6 +19,70 @@ app.use(
   })
 );
 app.use(cookieParser());
+
+// --- Webhook routes: MUST be registered before express.json() below. ---
+// Both Stripe's and Binance Pay's signature verification is computed over
+// the *raw* request body bytes -- if the global JSON parser runs first,
+// the body has already been parsed/re-serialized and the signature check
+// will fail (harmlessly, but permanently). express.raw() here captures the
+// untouched bytes for just these two routes.
+
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  const signature = req.header('stripe-signature');
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!signature || !webhookSecret) {
+    return res.status(400).json({ error: 'Missing signature or webhook secret' });
+  }
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+  } catch (err) {
+    console.error('Stripe webhook signature verification failed:', err);
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
+
+  try {
+    await handleStripeWebhookEvent(event);
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Error handling Stripe webhook event:', err);
+    // 500 tells Stripe to retry -- appropriate here since the failure is
+    // on our side (e.g. a transient DB error), not a bad event.
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+app.post('/api/webhooks/binance', express.raw({ type: 'application/json' }), async (req, res) => {
+  const timestamp = req.header('binancepay-timestamp');
+  const nonce = req.header('binancepay-nonce');
+  const signature = req.header('binancepay-signature');
+  const rawBody = (req.body as Buffer).toString('utf8');
+
+  if (!timestamp || !nonce || !signature) {
+    return res.status(400).json({ returnCode: 'FAIL', returnMessage: 'Missing signature headers' });
+  }
+
+  try {
+    const valid = await verifyBinanceWebhookSignature(timestamp, nonce, rawBody, signature);
+    if (!valid) {
+      console.error('Binance Pay webhook signature verification failed');
+      return res.status(400).json({ returnCode: 'FAIL', returnMessage: 'Invalid signature' });
+    }
+
+    const payload = JSON.parse(rawBody);
+    await handleBinanceWebhookEvent(payload);
+
+    // Binance Pay requires exactly this ack shape on success, or it will
+    // keep retrying the notification (up to 6 times).
+    res.json({ returnCode: 'SUCCESS', returnMessage: null });
+  } catch (err) {
+    console.error('Error handling Binance Pay webhook event:', err);
+    res.status(500).json({ returnCode: 'FAIL', returnMessage: 'Internal error' });
+  }
+});
+
+// --- Everything below this line uses the parsed JSON body as normal. ---
 app.use(express.json({ limit: '25mb' })); // generous: documents embed base64 images
 
 app.use('/api/auth', authRouter);
@@ -32,7 +96,6 @@ function requireDeviceId(req: express.Request, res: express.Response): string | 
   return deviceId;
 }
 
-// List documents for the current device (metadata only, not full content)
 app.get('/api/documents', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -45,7 +108,6 @@ app.get('/api/documents', async (req, res) => {
   })));
 });
 
-// Fetch one full document
 app.get('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -54,7 +116,6 @@ app.get('/api/documents/:id', async (req, res) => {
   res.json(JSON.parse(row.data));
 });
 
-// Create or update (auto-save calls this repeatedly with the same id)
 app.put('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -81,17 +142,12 @@ app.delete('/api/documents/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Convenience endpoint for the client to mint a new document id
 app.post('/api/documents', (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
   res.json({ id: nanoid() });
 });
 
-// Create a share link for one of the current device's own documents.
-// Only the owning device can mint new share tokens for a document —
-// otherwise anyone with a view link could create their own edit link
-// for the same doc, defeating the point of choosing an access level.
 app.post('/api/documents/:id/shares', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -104,7 +160,7 @@ app.post('/api/documents/:id/shares', async (req, res) => {
     return res.status(400).json({ error: "access must be 'view' or 'edit'" });
   }
 
-  const token = nanoid(21); // longer than the default device/document ids — this token IS the credential
+  const token = nanoid(21);
   await sharesRepo.create({
     token,
     document_id: req.params.id,
@@ -127,16 +183,13 @@ app.delete('/api/shares/:token', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
   const share = await sharesRepo.getByToken(req.params.token);
-  if (!share) return res.json({ ok: true }); // already gone, nothing to do
+  if (!share) return res.json({ ok: true });
   const owned = await documentsRepo.get(share.document_id, deviceId);
   if (!owned) return res.status(403).json({ error: 'Not the owner of this share' });
   await sharesRepo.revoke(req.params.token);
   res.json({ ok: true });
 });
 
-// Resolve a share token to its document — no device id required, since
-// the token itself grants access. This is the route a recipient's browser
-// calls when opening a shared link.
 app.get('/api/shared/:token', async (req, res) => {
   const share = await sharesRepo.getByToken(req.params.token);
   if (!share) return res.status(404).json({ error: 'This share link is invalid or has been revoked' });
@@ -145,9 +198,6 @@ app.get('/api/shared/:token', async (req, res) => {
   res.json({ document: JSON.parse(doc.data), access: share.access });
 });
 
-// Save via a share token — only valid for 'edit' tokens. A 'view' token
-// hitting this route is rejected even though it successfully resolved the
-// GET above, since read access and write access are different grants.
 app.put('/api/shared/:token', async (req, res) => {
   const share = await sharesRepo.getByToken(req.params.token);
   if (!share) return res.status(404).json({ error: 'This share link is invalid or has been revoked' });
@@ -164,7 +214,7 @@ app.put('/api/shared/:token', async (req, res) => {
   const now = Date.now();
   await documentsRepo.upsert({
     id: doc.id,
-    device_id: doc.device_id, // preserve original owner, the editor via link doesn't become the owner
+    device_id: doc.device_id,
     title: body.title ?? doc.title,
     data: JSON.stringify(body),
     created_at: doc.created_at,
@@ -173,10 +223,59 @@ app.put('/api/shared/:token', async (req, res) => {
   res.json({ ok: true, updatedAt: now });
 });
 
+// --- Billing ---
+
+app.get('/api/subscription', requireAuth, async (req, res) => {
+  const userId = (req as any).userId;
+  const sub = await subscriptionsRepo.getByUserId(userId);
+  if (!sub) {
+    return res.json({ planId: 'free', status: 'none' });
+  }
+  res.json({
+    planId: sub.status === 'active' ? sub.plan_id : 'free',
+    status: sub.status,
+    provider: sub.provider,
+    currentPeriodEnd: sub.current_period_end,
+    cancelAtPeriodEnd: sub.cancel_at_period_end,
+  });
+});
+
+app.post('/api/checkout/stripe', requireAuth, async (req, res) => {
+  const userId = (req as any).userId;
+  const planId = req.body?.planId as PlanId | undefined;
+  if (planId !== 'pro_monthly' && planId !== 'pro_yearly') {
+    return res.status(400).json({ error: 'Invalid planId' });
+  }
+
+  try {
+    const user = await usersRepo.getById(userId);
+    if (!user) return res.status(401).json({ error: 'Not signed in' });
+    const url = await createCheckoutSession(userId, user.email, planId);
+    res.json({ url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to start checkout' });
+  }
+});
+
+app.post('/api/checkout/binance', requireAuth, async (req, res) => {
+  const userId = (req as any).userId;
+  const planId = req.body?.planId as PlanId | undefined;
+  if (planId !== 'pro_monthly' && planId !== 'pro_yearly') {
+    return res.status(400).json({ error: 'Invalid planId' });
+  }
+
+  try {
+    const checkoutUrl = await createBinanceOrder(userId, planId);
+    res.json({ url: checkoutUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to start checkout' });
+  }
+});
+
 const port = process.env.PORT ? Number(process.env.PORT) : 8787;
 
-// Table creation is async now (pg, unlike better-sqlite3, has no synchronous
-// exec), so the server only starts listening once the schema is confirmed ready.
 initDb()
   .then(() => {
     app.listen(port, () => {

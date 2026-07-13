@@ -10,8 +10,6 @@ export const pool = new Pool({
 });
 
 // Call this once at startup, before the server starts accepting requests.
-// (better-sqlite3's db.exec ran synchronously at import time; pg is async,
-// so table creation has to be awaited explicitly instead.)
 export async function initDb(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS documents (
@@ -32,17 +30,12 @@ export async function initDb(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_shares_document_id ON shares(document_id);
 
-    -- Auth: a user is identified by email only (magic link, no passwords).
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       created_at BIGINT NOT NULL
     );
 
-    -- One-time tokens emailed to the user. Deliberately short-lived and
-    -- single-use (see 'used' flag) — this table is the actual credential
-    -- until it's exchanged for a session, so it needs the same care as a
-    -- password reset token would.
     CREATE TABLE IF NOT EXISTS magic_links (
       token TEXT PRIMARY KEY,
       email TEXT NOT NULL,
@@ -50,9 +43,6 @@ export async function initDb(): Promise<void> {
       used BOOLEAN NOT NULL DEFAULT false
     );
 
-    -- Long-lived session tokens, set as an httpOnly cookie. Separate from
-    -- magic_links so that verifying a magic link exchanges it for a
-    -- session rather than the magic link itself living on as a credential.
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -73,10 +63,24 @@ export async function initDb(): Promise<void> {
       cancel_at_period_end BOOLEAN DEFAULT false
     );
 
-    -- Nullable, additive column: anonymous (device_id-only) documents keep
-    -- working exactly as before. Once a device logs in, documents created
-    -- afterward (and existing ones via a one-time "claim" step) get this
-    -- set too, so a user's documents follow them across devices.
+    -- Tracks Binance Pay orders from creation through to webhook
+    -- confirmation. Needed because the Binance webhook payload only
+    -- carries back the merchantTradeNo we gave it -- this table is what
+    -- lets us map that back to "which user, which plan" once the webhook
+    -- fires. (Stripe doesn't need an equivalent table: its Checkout
+    -- Session already carries client_reference_id/metadata that round-trip
+    -- through Stripe's own webhook automatically.)
+    CREATE TABLE IF NOT EXISTS payment_orders (
+      merchant_trade_no TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'binance',
+      status TEXT NOT NULL DEFAULT 'created', -- created | paid | failed | expired
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_payment_orders_user_id ON payment_orders(user_id);
+
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
   `);
@@ -86,7 +90,7 @@ export interface DocumentRow {
   id: string;
   device_id: string;
   title: string;
-  data: string; // JSON-serialized PDFDocument
+  data: string;
   created_at: number;
   updated_at: number;
   user_id?: string | null;
@@ -109,19 +113,12 @@ export const documentsRepo = {
     return rows[0];
   },
 
-  // No device check — used only when a valid share token has already been
-  // verified by the caller. The token is the credential in that path, not
-  // the device id, so this intentionally bypasses ownership.
   async getById(id: string): Promise<DocumentRow | undefined> {
     const { rows } = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
     return rows[0];
   },
 
   async upsert(row: DocumentRow): Promise<void> {
-    // The WHERE clause on the DO UPDATE keeps the original semantics: if a
-    // row with this id already exists under a *different* device_id, the
-    // update is skipped (id collision doesn't let one device overwrite
-    // another device's document).
     await pool.query(
       `INSERT INTO documents (id, device_id, title, data, created_at, updated_at, user_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -139,9 +136,6 @@ export const documentsRepo = {
     await pool.query('DELETE FROM documents WHERE id = $1 AND device_id = $2', [id, deviceId]);
   },
 
-  // One-time migration when a device logs in: attach any of its existing
-  // anonymous documents to the new user_id. Only touches rows that aren't
-  // already claimed, so re-running this (e.g. logging in again) is safe.
   async claimForUser(deviceId: string, userId: string): Promise<void> {
     await pool.query(
       'UPDATE documents SET user_id = $1 WHERE device_id = $2 AND user_id IS NULL',
@@ -165,9 +159,6 @@ export const sharesRepo = {
     );
   },
 
-  // Looked up with no device_id check by design — a share token IS the
-  // credential. Anyone holding it gets the access level it was created
-  // with. This mirrors Google Docs' "anyone with the link" sharing model.
   async getByToken(token: string): Promise<ShareRow | undefined> {
     const { rows } = await pool.query('SELECT * FROM shares WHERE token = $1', [token]);
     return rows[0];
@@ -210,9 +201,6 @@ export const usersRepo = {
     );
   },
 
-  // Finds the user for this email, creating one if this is their first
-  // time signing in. A magic link with an unrecognized email is a valid
-  // "sign up" flow, not an error — there's no separate registration step.
   async findOrCreate(email: string, newId: string): Promise<UserRow> {
     const existing = await this.getByEmail(email);
     if (existing) return existing;
@@ -271,10 +259,91 @@ export const sessionsRepo = {
     await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
   },
 
-  // Pushes a session's expiry forward — called on every authenticated
-  // request so "signed in" means "active within the last N days" rather
-  // than a fixed expiry counted from login time.
   async refresh(token: string, newExpiresAt: number): Promise<void> {
     await pool.query('UPDATE sessions SET expires_at = $1 WHERE token = $2', [newExpiresAt, token]);
+  },
+};
+
+export interface SubscriptionRow {
+  user_id: string;
+  plan_id: string;
+  status: string;
+  provider: string | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  crypto_tx_ref: string | null;
+  current_period_end: Date | null;
+  cancel_at_period_end: boolean;
+}
+
+export const subscriptionsRepo = {
+  async getByUserId(userId: string): Promise<SubscriptionRow | undefined> {
+    const { rows } = await pool.query('SELECT * FROM subscriptions WHERE user_id = $1', [userId]);
+    return rows[0];
+  },
+
+  // Upserts on user_id -- both Stripe and Binance webhooks call this as
+  // the single place that actually grants/revokes plan access, so the two
+  // payment providers can't drift into different update logic.
+  async upsert(row: Partial<SubscriptionRow> & { user_id: string }): Promise<void> {
+    await pool.query(
+      `INSERT INTO subscriptions (
+         user_id, plan_id, status, provider, stripe_customer_id,
+         stripe_subscription_id, crypto_tx_ref, current_period_end, cancel_at_period_end
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (user_id) DO UPDATE SET
+         plan_id = EXCLUDED.plan_id,
+         status = EXCLUDED.status,
+         provider = EXCLUDED.provider,
+         stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, subscriptions.stripe_customer_id),
+         stripe_subscription_id = COALESCE(EXCLUDED.stripe_subscription_id, subscriptions.stripe_subscription_id),
+         crypto_tx_ref = COALESCE(EXCLUDED.crypto_tx_ref, subscriptions.crypto_tx_ref),
+         current_period_end = EXCLUDED.current_period_end,
+         cancel_at_period_end = EXCLUDED.cancel_at_period_end`,
+      [
+        row.user_id,
+        row.plan_id ?? 'free',
+        row.status ?? 'none',
+        row.provider ?? null,
+        row.stripe_customer_id ?? null,
+        row.stripe_subscription_id ?? null,
+        row.crypto_tx_ref ?? null,
+        row.current_period_end ?? null,
+        row.cancel_at_period_end ?? false,
+      ]
+    );
+  },
+};
+
+export interface PaymentOrderRow {
+  merchant_trade_no: string;
+  user_id: string;
+  plan_id: string;
+  provider: string;
+  status: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export const paymentOrdersRepo = {
+  async create(row: PaymentOrderRow): Promise<void> {
+    await pool.query(
+      `INSERT INTO payment_orders (merchant_trade_no, user_id, plan_id, provider, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [row.merchant_trade_no, row.user_id, row.plan_id, row.provider, row.status, row.created_at, row.updated_at]
+    );
+  },
+
+  async getByMerchantTradeNo(merchantTradeNo: string): Promise<PaymentOrderRow | undefined> {
+    const { rows } = await pool.query('SELECT * FROM payment_orders WHERE merchant_trade_no = $1', [merchantTradeNo]);
+    return rows[0];
+  },
+
+  async updateStatus(merchantTradeNo: string, status: string): Promise<void> {
+    await pool.query(
+      'UPDATE payment_orders SET status = $1, updated_at = $2 WHERE merchant_trade_no = $3',
+      [status, Date.now(), merchantTradeNo]
+    );
   },
 };
