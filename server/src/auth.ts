@@ -4,14 +4,19 @@ import { usersRepo, magicLinksRepo, sessionsRepo, documentsRepo } from './db.js'
 import { sendMagicLinkEmail } from './email.js';
 
 const SESSION_COOKIE = 'session';
-const MAGIC_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes — short-lived on purpose
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MAGIC_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes -- short-lived on purpose
+
+// Sliding window: a session lasts 14 days from its *last use*, not from
+// login. Every authenticated request pushes expires_at forward another 14
+// days (see refreshSession below), so a user who visits regularly never
+// gets signed out -- only 14 days of total inactivity expires them.
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const isProd = process.env.NODE_ENV === 'production';
 
 function simpleEmailCheck(email: unknown): email is string {
-  // Deliberately loose — real validation happens by virtue of the email
+  // Deliberately loose -- real validation happens by virtue of the email
   // either arriving or not. This just filters out obvious garbage before
   // we burn a Resend send on it.
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -19,7 +24,7 @@ function simpleEmailCheck(email: unknown): email is string {
 
 function setSessionCookie(res: express.Response, token: string) {
   res.cookie(SESSION_COOKIE, token, {
-    httpOnly: true, // not readable by client JS — mitigates XSS token theft
+    httpOnly: true, // not readable by client JS -- mitigates XSS token theft
     secure: isProd, // requires HTTPS in production; allow http for local dev
     sameSite: 'lax', // sent on normal navigation/top-level GETs, blocked on cross-site POSTs (CSRF mitigation)
     maxAge: SESSION_TTL_MS,
@@ -31,12 +36,25 @@ function clearSessionCookie(res: express.Response) {
   res.clearCookie(SESSION_COOKIE, { path: '/' });
 }
 
+// Pushes both the DB session row and the browser cookie's expiry forward
+// by another SESSION_TTL_MS. Called on every request that successfully
+// authenticates -- this is what makes the window "sliding" instead of a
+// fixed 14 days from login. Fire-and-forget from the caller's perspective
+// (awaited here, but never blocks the actual request on failure since a
+// failed refresh just means slightly earlier expiry next time, not a
+// broken request).
+async function refreshSession(res: express.Response, token: string) {
+  const newExpiresAt = Date.now() + SESSION_TTL_MS;
+  await sessionsRepo.refresh(token, newExpiresAt);
+  setSessionCookie(res, token); // re-sends the cookie with a renewed maxAge
+}
+
 // Attaches req.userId if a valid, non-expired session cookie is present.
-// Does NOT reject the request if there isn't one — routes that work for
+// Does NOT reject the request if there isn't one -- routes that work for
 // both anonymous and logged-in users (e.g. saving a document) use this.
 export async function optionalAuth(
   req: express.Request,
-  _res: express.Response,
+  res: express.Response,
   next: express.NextFunction
 ) {
   const token = req.cookies?.[SESSION_COOKIE];
@@ -45,6 +63,7 @@ export async function optionalAuth(
   const session = await sessionsRepo.getByToken(token);
   if (session && session.expires_at > Date.now()) {
     (req as any).userId = session.user_id;
+    await refreshSession(res, token);
   }
   next();
 }
@@ -66,6 +85,7 @@ export async function requireAuth(
   }
 
   (req as any).userId = session.user_id;
+  await refreshSession(res, token);
   next();
 }
 
@@ -73,7 +93,7 @@ export const authRouter = express.Router();
 
 // Step 1: user submits their email, we mail them a one-time link.
 // Always returns the same generic response whether or not the email is
-// new — this route shouldn't leak whether a given email has an account.
+// new -- this route shouldn't leak whether a given email has an account.
 authRouter.post('/request-link', async (req, res) => {
   const email = req.body?.email;
   if (!simpleEmailCheck(email)) {

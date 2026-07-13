@@ -158,6 +158,29 @@ export default function App() {
         }}
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {isOwner && (
+            <button
+              onClick={() => setShowLanding(true)}
+              title="Home"
+              aria-label="Home"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '6px 8px',
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M4 11.5L12 4l8 7.5M6 9.5V20h4.5v-5.5h3V20H18V9.5"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
           {isOwner && <FileMenu />}
           {!isReadOnly && <EditMenu />}
           {!isReadOnly && <AddMenu />}

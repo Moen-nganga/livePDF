@@ -270,4 +270,11 @@ export const sessionsRepo = {
   async remove(token: string): Promise<void> {
     await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
   },
+
+  // Pushes a session's expiry forward — called on every authenticated
+  // request so "signed in" means "active within the last N days" rather
+  // than a fixed expiry counted from login time.
+  async refresh(token: string, newExpiresAt: number): Promise<void> {
+    await pool.query('UPDATE sessions SET expires_at = $1 WHERE token = $2', [newExpiresAt, token]);
+  },
 };
