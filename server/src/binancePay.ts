@@ -20,6 +20,13 @@ function randomNonce(length = 32): string {
 // BinancePay-Certificate-SN) and the timestamp/nonce themselves. This is
 // entirely separate from webhook verification below, which uses RSA
 // against a Binance-issued public key, not this HMAC secret.
+interface BinancePayApiResponse<T> {
+  status: string;
+  code: string;
+  errorMessage?: string;
+  data: T;
+}
+
 async function signedRequest<T>(path: string, body: object): Promise<T> {
   if (!API_KEY || !API_SECRET) {
     throw new Error('BINANCE_PAY_API_KEY / BINANCE_PAY_API_SECRET are not set');
@@ -43,11 +50,11 @@ async function signedRequest<T>(path: string, body: object): Promise<T> {
     body: jsonBody,
   });
 
-  const data = await res.json();
+  const data = (await res.json()) as BinancePayApiResponse<T>;
   if (data.status !== 'SUCCESS') {
     throw new Error(`Binance Pay error: ${data.errorMessage ?? data.code ?? 'unknown error'}`);
   }
-  return data.data as T;
+  return data.data;
 }
 
 interface CreateOrderResult {
