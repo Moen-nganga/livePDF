@@ -16,6 +16,7 @@ import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
 import { AuthScreen } from './components/AuthScreen';
+import { UnsavedChangesDialog } from './components/UnsavedChangesDialog';
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -58,7 +59,8 @@ export default function App() {
   const [verifying, setVerifying] = useState(!!verifyTokenParam);
   const [showLanding, setShowLanding] = useState(!shareToken && !verifyTokenParam);
   const online = useOnlineStatus();
-  const saveStatus = useAutoSave();
+  const { status: saveStatus, hasUnsavedChanges, saveNow } = useAutoSave();
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
   // Register the service worker once, on mount — production only. In dev,
   // the service worker's whole job (serve cached files instead of fetching)
@@ -143,6 +145,14 @@ export default function App() {
     return <div style={{ padding: 24 }}>Loading…</div>;
   }
 
+  function goHome() {
+    if (hasUnsavedChanges) {
+      setShowUnsavedDialog(true);
+      return;
+    }
+    setShowLanding(true);
+  }
+
   const isOwner = shareSession === null;
   const isReadOnly = shareSession?.access === 'view';
 
@@ -160,7 +170,7 @@ export default function App() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {isOwner && (
             <button
-              onClick={() => setShowLanding(true)}
+              onClick={goHome}
               title="Home"
               aria-label="Home"
               style={{
@@ -216,6 +226,21 @@ export default function App() {
 
       {downloadDialogOpen && document && (
         <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
+      )}
+
+      {showUnsavedDialog && (
+        <UnsavedChangesDialog
+          onSave={async () => {
+            const ok = await saveNow();
+            if (ok) setShowUnsavedDialog(false);
+            return ok;
+          }}
+          onDiscard={() => {
+            setShowUnsavedDialog(false);
+            setShowLanding(true);
+          }}
+          onCancel={() => setShowUnsavedDialog(false)}
+        />
       )}
 
       {!isReadOnly && <Toolbar />}

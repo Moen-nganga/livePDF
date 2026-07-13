@@ -5,6 +5,8 @@ import { useAuthStore } from '../store/authStore';
 import { TEMPLATES, type TemplateDefinition } from '../lib/templates';
 import { api, type DocumentSummary } from '../lib/api';
 import { AuthScreen } from './AuthScreen';
+import { AccountMenu } from './AccountMenu';
+import { UpgradeScreen } from './UpgradeScreen';
 
 interface Props {
   onEnter: () => void;
@@ -19,8 +21,8 @@ export function LandingScreen({ onEnter }: Props) {
   const authUser = useAuthStore((s) => s.user);
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
-  const logout = useAuthStore((s) => s.logout);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
+  const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
 
   useEffect(() => {
     api.listDocuments()
@@ -83,6 +85,10 @@ export function LandingScreen({ onEnter }: Props) {
     return <AuthScreen onBack={() => setShowAuthScreen(false)} />;
   }
 
+  if (showUpgradeScreen) {
+    return <UpgradeScreen onBack={() => setShowUpgradeScreen(false)} />;
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -126,22 +132,7 @@ export function LandingScreen({ onEnter }: Props) {
             Your documents are saved automatically
           </div>
           {authStatus === 'authenticated' && authUser ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{authUser.email}</span>
-              <button
-                onClick={() => logout()}
-                style={{
-                  fontSize: 12,
-                  padding: '6px 14px',
-                  borderRadius: 20,
-                  border: '1.5px solid var(--color-border)',
-                  background: 'transparent',
-                  cursor: 'pointer',
-                }}
-              >
-                Sign out
-              </button>
-            </div>
+            <AccountMenu onUpgradeClick={() => setShowUpgradeScreen(true)} />
           ) : (
             <button
               onClick={() => setShowAuthScreen(true)}
