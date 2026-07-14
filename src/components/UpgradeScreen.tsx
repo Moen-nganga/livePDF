@@ -1,13 +1,34 @@
+import { useState } from 'react';
+import { api, type PlanId } from '../lib/api';
+import { PLANS } from '../lib/plans';
+
 interface Props {
   onBack: () => void;
 }
 
-// Placeholder for now — real Stripe + crypto checkout wiring is the next
-// piece of work (see FEATURE_FLAGS / subscriptions table already in
-// types/subscription.ts and server/src/db.ts). This just establishes the
-// full-page slot and matches the visual language of AuthScreen/LandingScreen
-// so swapping in real plan cards + checkout buttons later is a drop-in.
 export function UpgradeScreen({ onBack }: Props) {
+  const [selectedPlan, setSelectedPlan] = useState<PlanId>('pro_monthly');
+  const [loadingProvider, setLoadingProvider] = useState<'stripe' | 'binance' | null>(null);
+  const [error, setError] = useState('');
+
+  async function checkout(provider: 'stripe' | 'binance') {
+    setError('');
+    setLoadingProvider(provider);
+    try {
+      const url =
+        provider === 'stripe'
+          ? await api.createStripeCheckout(selectedPlan)
+          : await api.createBinanceCheckout(selectedPlan);
+      // Full-page redirect to the provider's own hosted checkout page --
+      // both Stripe Checkout and Binance Pay's checkoutUrl are meant to be
+      // navigated to directly, not embedded.
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start checkout');
+      setLoadingProvider(null);
+    }
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -17,28 +38,128 @@ export function UpgradeScreen({ onBack }: Props) {
       alignItems: 'center',
       justifyContent: 'center',
       padding: 24,
+      overflowY: 'auto',
     }}>
       <div style={{
         width: '100%',
-        maxWidth: 480,
+        maxWidth: 640,
         background: 'var(--color-surface)',
         border: '1.5px solid var(--color-border)',
         borderRadius: 14,
         boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
         padding: '40px 36px',
-        textAlign: 'center',
       }}>
-        <div style={{ fontSize: 36, marginBottom: 12 }}>⭐</div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text)', marginBottom: 8 }}>
-          Premium plan
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⭐</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text)' }}>
+            Upgrade to Premium
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginTop: 6 }}>
+            Unlock clean exports, OCR, batch export, and merge/split tools.
+          </p>
         </div>
-        <p style={{ fontSize: 14, color: 'var(--color-text-muted)', lineHeight: 1.5, marginBottom: 28 }}>
-          Checkout isn't live yet — pricing and payment (Stripe and crypto) are coming soon.
-        </p>
+
+        {/* Plan selector */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+          {PLANS.map((plan) => (
+            <button
+              key={plan.id}
+              onClick={() => setSelectedPlan(plan.id)}
+              style={{
+                flex: 1,
+                textAlign: 'left',
+                padding: '16px 18px',
+                borderRadius: 10,
+                border: selectedPlan === plan.id ? '2px solid #1a73e8' : '1.5px solid var(--color-border)',
+                background: selectedPlan === plan.id ? '#f0f6ff' : 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)' }}>
+                {plan.label}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text)', marginTop: 4 }}>
+                ${plan.priceUsd}
+                <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-muted)' }}>
+                  {' '}/ {plan.interval}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4, marginBottom: 10 }}>
+                {plan.tagline}
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
+                {plan.features.map((feature) => (
+                  <li
+                    key={feature}
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--color-text-secondary)',
+                      marginBottom: 4,
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ color: '#1a73e8', flexShrink: 0 }}>✓</span>
+                    <span>{feature}</span>
+                  </li>
+                ))}
+              </ul>
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <p style={{ color: '#dc2626', fontSize: 13, marginBottom: 12, textAlign: 'center' }}>{error}</p>
+        )}
+
+        {/* Checkout buttons */}
+        <button
+          onClick={() => checkout('stripe')}
+          disabled={loadingProvider !== null}
+          style={{
+            width: '100%',
+            padding: '12px 0',
+            borderRadius: 8,
+            border: 'none',
+            background: '#1a73e8',
+            color: 'white',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: loadingProvider ? 'default' : 'pointer',
+            opacity: loadingProvider && loadingProvider !== 'stripe' ? 0.6 : 1,
+            marginBottom: 10,
+          }}
+        >
+          {loadingProvider === 'stripe' ? 'Redirecting…' : 'Pay with card (Stripe)'}
+        </button>
+
+        <button
+          onClick={() => checkout('binance')}
+          disabled={loadingProvider !== null}
+          style={{
+            width: '100%',
+            padding: '12px 0',
+            borderRadius: 8,
+            border: '1.5px solid #f0b90b',
+            background: 'transparent',
+            color: '#8a6d00',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: loadingProvider ? 'default' : 'pointer',
+            opacity: loadingProvider && loadingProvider !== 'binance' ? 0.6 : 1,
+            marginBottom: 20,
+          }}
+        >
+          {loadingProvider === 'binance' ? 'Redirecting…' : 'Pay with crypto (Binance Pay)'}
+        </button>
+
         <button
           onClick={onBack}
+          disabled={loadingProvider !== null}
           style={{
-            padding: '10px 24px',
+            width: '100%',
+            padding: '10px 0',
             borderRadius: 8,
             border: '1.5px solid var(--color-border)',
             background: 'transparent',

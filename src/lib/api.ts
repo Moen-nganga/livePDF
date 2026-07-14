@@ -28,6 +28,16 @@ export interface AuthUser {
   email: string;
 }
 
+export type PlanId = 'free' | 'pro_monthly' | 'pro_yearly';
+
+export interface SubscriptionInfo {
+  planId: PlanId;
+  status: string;
+  provider?: string | null;
+  currentPeriodEnd?: string | null;
+  cancelAtPeriodEnd?: boolean;
+}
+
 export const api = {
   async listDocuments(): Promise<DocumentSummary[]> {
     const res = await fetch(`${API_BASE}/api/documents`, { headers: headers() });
@@ -100,9 +110,6 @@ export const api = {
   },
 
   // --- Auth ---
-  // These use credentials: 'include' (not the X-Device-Id header pattern
-  // above) since auth relies on an httpOnly session cookie, not a device id.
-
   async requestMagicLink(email: string): Promise<void> {
     const res = await fetch(`${API_BASE}/api/auth/request-link`, {
       method: 'POST',
@@ -114,8 +121,6 @@ export const api = {
     if (!res.ok) throw new Error(data.error ?? 'Failed to send sign-in link');
   },
 
-  // Passes the current device's id so the server can attach this device's
-  // existing anonymous documents to the now-known user.
   async verifyMagicLink(token: string): Promise<AuthUser> {
     const res = await fetch(`${API_BASE}/api/auth/verify`, {
       method: 'POST',
@@ -137,5 +142,36 @@ export const api = {
 
   async logout(): Promise<void> {
     await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  },
+
+  // --- Billing ---
+  async getSubscription(): Promise<SubscriptionInfo> {
+    const res = await fetch(`${API_BASE}/api/subscription`, { credentials: 'include' });
+    if (!res.ok) return { planId: 'free', status: 'none' };
+    return res.json();
+  },
+
+  async createStripeCheckout(planId: PlanId): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/checkout/stripe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ planId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'Failed to start checkout');
+    return data.url;
+  },
+
+  async createBinanceCheckout(planId: PlanId): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/checkout/binance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ planId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'Failed to start checkout');
+    return data.url;
   },
 };
