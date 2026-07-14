@@ -28,7 +28,7 @@ export const PLANS: PlanDisplay[] = [
   {
     id: 'pro_monthly',
     label: 'Pro Monthly',
-    priceUsd: 9,
+    priceUsd: 8,
     interval: 'month',
     tagline: 'Full access, billed monthly',
     features: PRO_FEATURES,
@@ -36,7 +36,7 @@ export const PLANS: PlanDisplay[] = [
   {
     id: 'pro_yearly',
     label: 'Pro Yearly',
-    priceUsd: 90,
+    priceUsd: 80,
     interval: 'year',
     tagline: 'Full access, billed yearly (save ~17%)',
     features: PRO_FEATURES,
