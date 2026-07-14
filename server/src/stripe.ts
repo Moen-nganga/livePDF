@@ -3,10 +3,20 @@ import { subscriptionsRepo } from './db.js';
 import { getPlanDetails, type PlanId } from './plans.js';
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-  apiVersion: '2024-06-20',
+  apiVersion: '2026-06-24.dahlia',
 });
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
+
+// Recent Stripe API versions moved current_period_end off the top-level
+// Subscription object and onto each subscription item instead (a
+// subscription can have multiple items/prices, each with its own billing
+// period). We only ever create single-item subscriptions here, so the
+// first item's period end is the one that matters.
+function getCurrentPeriodEnd(subscription: Stripe.Subscription): Date {
+  const item = subscription.items.data[0];
+  return new Date(item.current_period_end * 1000);
+}
 
 // Creates a Stripe Checkout Session in subscription mode for the given
 // user/plan. client_reference_id + metadata.userId both carry the userId
@@ -63,7 +73,7 @@ export async function handleStripeWebhookEvent(event: Stripe.Event): Promise<voi
         provider: 'stripe',
         stripe_customer_id: typeof session.customer === 'string' ? session.customer : undefined,
         stripe_subscription_id: subscription.id,
-        current_period_end: new Date(subscription.current_period_end * 1000),
+        current_period_end: getCurrentPeriodEnd(subscription),
         cancel_at_period_end: subscription.cancel_at_period_end,
       });
       break;
@@ -86,7 +96,7 @@ export async function handleStripeWebhookEvent(event: Stripe.Event): Promise<voi
         status: isDeleted ? 'canceled' : subscription.status,
         provider: 'stripe',
         stripe_subscription_id: subscription.id,
-        current_period_end: new Date(subscription.current_period_end * 1000),
+        current_period_end: getCurrentPeriodEnd(subscription),
         cancel_at_period_end: subscription.cancel_at_period_end,
       });
       break;

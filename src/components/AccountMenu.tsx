@@ -1,19 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuthStore } from '../store/authStore';
-
-// The languages offered here are just the UI list for now — selecting one
-// only stores a preference (see handleSelectLanguage below). Nothing in
-// the app actually reads this yet; that wiring is a separate, later piece
-// of work (a real i18n setup). Storing it now means that work can pick up
-// an already-chosen preference instead of starting from nothing.
-const LANGUAGES = [
-  { code: 'en', label: 'English' },
-  { code: 'sw', label: 'Kiswahili' },
-  { code: 'fr', label: 'Français' },
-  { code: 'es', label: 'Español' },
-] as const;
-
-const LANGUAGE_STORAGE_KEY = 'preferredLanguage';
+import { useSubscriptionStore } from '../store/subscriptionStore';
+import { useI18nStore } from '../store/i18nStore';
+import { LOCALES } from '../lib/i18n/translations';
 
 interface Props {
   onUpgradeClick: () => void;
@@ -22,12 +11,20 @@ interface Props {
 export function AccountMenu({ onUpgradeClick }: Props) {
   const authUser = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const subscription = useSubscriptionStore((s) => s.subscription);
+  const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
+  const locale = useI18nStore((s) => s.locale);
+  const setLocale = useI18nStore((s) => s.setLocale);
+  const t = useI18nStore((s) => s.t);
+
   const [open, setOpen] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState(
-    () => localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? 'en'
-  );
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchSubscription();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Close on outside click — standard dropdown behavior.
   useEffect(() => {
@@ -45,10 +42,10 @@ export function AccountMenu({ onUpgradeClick }: Props) {
 
   const initial = authUser.email.charAt(0).toUpperCase();
   const displayName = authUser.email.split('@')[0];
+  const planId = subscription?.planId ?? 'free';
 
-  function handleSelectLanguage(code: string) {
-    setSelectedLanguage(code);
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, code);
+  function handleSelectLanguage(code: (typeof LOCALES)[number]['code']) {
+    setLocale(code);
     setLanguageMenuOpen(false);
     setOpen(false);
   }
@@ -86,10 +83,8 @@ export function AccountMenu({ onUpgradeClick }: Props) {
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text)', lineHeight: 1.2 }}>
             {displayName}
           </div>
-          {/* Hardcoded until the subscriptions table is actually read from
-              the client — swap for the real plan once that's wired up. */}
           <div style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.2 }}>
-            Free plan
+            {t(`plan.${planId}`)}
           </div>
         </div>
       </button>
@@ -111,28 +106,28 @@ export function AccountMenu({ onUpgradeClick }: Props) {
           <div style={{ position: 'relative' }}>
             <MenuItem
               icon={<GlobeIcon />}
-              label="Language"
-              trailing={LANGUAGES.find((l) => l.code === selectedLanguage)?.label}
+              label={t('menu.language')}
+              trailing={LOCALES.find((l) => l.code === locale)?.label}
               onClick={() => setLanguageMenuOpen((v) => !v)}
             />
             {languageMenuOpen && (
               <div style={{ background: '#fafbfc', borderTop: '1px solid var(--color-border)' }}>
-                {LANGUAGES.map((lang) => (
+                {LOCALES.map((l) => (
                   <button
-                    key={lang.code}
-                    onClick={() => handleSelectLanguage(lang.code)}
+                    key={l.code}
+                    onClick={() => handleSelectLanguage(l.code)}
                     style={{
                       display: 'flex',
                       width: '100%',
                       padding: '9px 16px 9px 40px',
                       fontSize: 13,
                       textAlign: 'left',
-                      background: lang.code === selectedLanguage ? '#e8f0fe' : 'transparent',
-                      color: lang.code === selectedLanguage ? '#1a73e8' : 'var(--color-text)',
+                      background: l.code === locale ? '#e8f0fe' : 'transparent',
+                      color: l.code === locale ? '#1a73e8' : 'var(--color-text)',
                       cursor: 'pointer',
                     }}
                   >
-                    {lang.label}
+                    {l.label}
                   </button>
                 ))}
               </div>
@@ -141,7 +136,7 @@ export function AccountMenu({ onUpgradeClick }: Props) {
 
           <MenuItem
             icon={<StarIcon />}
-            label="Premium plan"
+            label={t('menu.premiumPlan')}
             onClick={() => {
               setOpen(false);
               onUpgradeClick();
@@ -155,13 +150,13 @@ export function AccountMenu({ onUpgradeClick }: Props) {
             style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
             onClick={() => setOpen(false)}
           >
-            <MenuItem icon={<HelpIcon />} label="Help" />
+            <MenuItem icon={<HelpIcon />} label={t('menu.help')} />
           </a>
 
           <div style={{ borderTop: '1px solid var(--color-border)' }}>
             <MenuItem
               icon={<SignOutIcon />}
-              label="Sign out"
+              label={t('menu.signOut')}
               onClick={() => {
                 setOpen(false);
                 logout();

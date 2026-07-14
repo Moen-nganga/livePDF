@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuthStore } from '../store/authStore';
+import { useI18nStore } from '../store/i18nStore';
 
 interface Props {
   onBack: () => void;
@@ -7,6 +8,7 @@ interface Props {
 
 export function AuthScreen({ onBack }: Props) {
   const requestMagicLink = useAuthStore((s) => s.requestMagicLink);
+  const t = useI18nStore((s) => s.t);
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [error, setError] = useState('');
@@ -52,18 +54,17 @@ export function AuthScreen({ onBack }: Props) {
             <rect x="8" y="24" width="7" height="2" rx="1" fill="white" fillOpacity="0.7" />
           </svg>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text)' }}>
-            PDF Editor
+            {t('app.name')}
           </div>
         </div>
 
         {state === 'sent' ? (
           <div>
             <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)', marginBottom: 8 }}>
-              Check your email
+              {t('auth.checkEmailTitle')}
             </div>
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
-              We sent a sign-in link to <strong>{email}</strong>. It expires in 15 minutes and works once —
-              click it to finish signing in.
+              {t('auth.checkEmailBody', { email })}
             </p>
             <button
               onClick={onBack}
@@ -78,26 +79,26 @@ export function AuthScreen({ onBack }: Props) {
                 width: '100%',
               }}
             >
-              Back
+              {t('auth.back')}
             </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
             <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)', marginBottom: 8 }}>
-              Sign in
+              {t('auth.signIn')}
             </div>
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
-              We'll email you a link to sign in — no password needed.
+              {t('auth.subtitle')}
             </p>
 
             <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)' }}>
-              Email address
+              {t('auth.emailLabel')}
             </label>
             <input
               type="email"
               required
               autoFocus
-              placeholder="you@example.com"
+              placeholder={t('auth.emailPlaceholder')}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               style={{
@@ -133,7 +134,7 @@ export function AuthScreen({ onBack }: Props) {
                 marginBottom: 12,
               }}
             >
-              {state === 'sending' ? 'Sending…' : 'Send sign-in link'}
+              {state === 'sending' ? t('auth.sending') : t('auth.sendLink')}
             </button>
 
             <button
@@ -150,7 +151,7 @@ export function AuthScreen({ onBack }: Props) {
                 cursor: 'pointer',
               }}
             >
-              ← Back
+              {t('auth.back')}
             </button>
           </form>
         )}

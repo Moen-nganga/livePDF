@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import { useAuthStore } from '../store/authStore';
+import { useSubscriptionStore } from '../store/subscriptionStore';
+import { useI18nStore } from '../store/i18nStore';
 import { TEMPLATES, type TemplateDefinition } from '../lib/templates';
 import { api, type DocumentSummary } from '../lib/api';
 import { AuthScreen } from './AuthScreen';
@@ -21,6 +23,8 @@ export function LandingScreen({ onEnter }: Props) {
   const authUser = useAuthStore((s) => s.user);
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
+  const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
+  const t = useI18nStore((s) => s.t);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
 
@@ -31,12 +35,45 @@ export function LandingScreen({ onEnter }: Props) {
       .finally(() => setLoadingRecent(false));
   }, []);
 
-  // The landing screen can be the very first thing a user sees, so check
-  // session status here too — App.tsx's own fetchMe() call covers the case
-  // where a document is already open, but that effect doesn't run before
-  // this component mounts if the app boots straight into the landing screen.
+  // Checks session + subscription on every load. The landing screen can be
+  // the very first thing a user sees, so this can't wait for the
+  // ?upgraded= redirect below -- someone who subscribed last week and is
+  // just opening the app normally today still needs their real plan
+  // fetched here, not left at whatever the default state was.
   useEffect(() => {
     if (authStatus === 'idle') fetchMe();
+    fetchSubscription();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Stripe/Binance both redirect back to APP_URL root after checkout (see
+  // success_url/returnUrl in stripe.ts and binancePay.ts), landing here as
+  // ?upgraded=stripe|binance. There's no guarantee the webhook has already
+  // been processed by the time the user is redirected back, so this just
+  // triggers a refetch and lets the badge/plan label catch up whenever the
+  // subscriptions table is actually updated -- it doesn't block on it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const upgraded = params.get('upgraded');
+    const canceled = params.get('upgradeCanceled');
+
+    if (upgraded) {
+      fetchSubscription();
+      alert(
+        upgraded === 'binance'
+          ? "Thanks! We're confirming your crypto payment — this can take a minute to reflect in your plan."
+          : "You're all set! Your Premium plan should be active now."
+      );
+    } else if (canceled) {
+      // No message needed -- the user just clicked "back" from checkout.
+    }
+
+    if (upgraded || canceled) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('upgraded');
+      url.searchParams.delete('upgradeCanceled');
+      window.history.replaceState({}, '', url.toString());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -120,16 +157,16 @@ export function LandingScreen({ onEnter }: Props) {
           </svg>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text)', lineHeight: 1.2 }}>
-              PDF Editor
+              {t('app.name')}
             </div>
             <div style={{ fontSize: 10, color: 'var(--color-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-              Document Studio
+              {t('app.tagline')}
             </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            Your documents are saved automatically
+            {t('landing.savedAutomatically')}
           </div>
           {authStatus === 'authenticated' && authUser ? (
             <AccountMenu onUpgradeClick={() => setShowUpgradeScreen(true)} />
@@ -147,7 +184,7 @@ export function LandingScreen({ onEnter }: Props) {
                 cursor: 'pointer',
               }}
             >
-              Sign in
+              {t('landing.signIn')}
             </button>
           )}
         </div>
@@ -176,10 +213,10 @@ export function LandingScreen({ onEnter }: Props) {
           }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-text)' }}>
-                Start a new document
+                {t('landing.startNewDocument')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                Choose a template or start from scratch
+                {t('landing.chooseTemplate')}
               </div>
             </div>
             <div style={{
@@ -190,7 +227,7 @@ export function LandingScreen({ onEnter }: Props) {
               padding: '4px 10px',
               borderRadius: 12,
             }}>
-              {TEMPLATES.length} templates
+              {t('landing.templatesCount', { count: TEMPLATES.length })}
             </div>
           </div>
 
@@ -231,10 +268,10 @@ export function LandingScreen({ onEnter }: Props) {
           }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-text)' }}>
-                Recent documents
+                {t('landing.recentDocuments')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                Pick up where you left off
+                {t('landing.pickUpWhereYouLeftOff')}
               </div>
             </div>
             {recent.length > 0 && (
@@ -246,7 +283,7 @@ export function LandingScreen({ onEnter }: Props) {
                 padding: '4px 10px',
                 borderRadius: 12,
               }}>
-                {recent.length} document{recent.length !== 1 ? 's' : ''}
+                {t('landing.documentsCount', { count: recent.length, plural: recent.length !== 1 ? 's' : '' })}
               </div>
             )}
           </div>
@@ -262,10 +299,10 @@ export function LandingScreen({ onEnter }: Props) {
             <div style={{ padding: '40px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>📂</div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
-                No recent documents yet
+                {t('landing.noRecentDocuments')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                Create a document above and it will appear here next time.
+                {t('landing.createOneAbove')}
               </div>
             </div>
           )}
@@ -280,7 +317,7 @@ export function LandingScreen({ onEnter }: Props) {
                 background: '#f8f9fa',
                 borderBottom: '1px solid var(--color-border)',
               }}>
-                {['Document', 'Last modified', 'Actions'].map((h) => (
+                {[t('landing.colDocument'), t('landing.colLastModified'), t('landing.colActions')].map((h) => (
                   <div key={h} style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                     {h}
                   </div>
@@ -313,6 +350,7 @@ function TemplateCard({
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const t = useI18nStore((s) => s.t);
 
   return (
     <button
@@ -354,7 +392,7 @@ function TemplateCard({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 12, color: 'var(--color-text-secondary)',
           }}>
-            Creating…
+            {t('landing.creating')}
           </div>
         )}
       </div>
@@ -580,6 +618,7 @@ function CertificateThumbnail() {
 
 function RecentCard({ doc, isLast, onClick }: { doc: DocumentSummary; isLast: boolean; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
+  const t = useI18nStore((s) => s.t);
 
   return (
     <div
@@ -642,7 +681,7 @@ function RecentCard({ doc, isLast, onClick }: { doc: DocumentSummary; isLast: bo
             cursor: 'pointer',
           }}
         >
-          Open
+          {t('landing.open')}
         </button>
       </div>
     </div>

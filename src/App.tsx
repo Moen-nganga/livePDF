@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from './store/editorStore';
 import { useAuthStore } from './store/authStore';
+import { useI18nStore } from './store/i18nStore';
 import { useAutoSave } from './hooks/useAutoSave';
 import { cacheDocumentForOffline } from './lib/offlineCache';
 import { api } from './lib/api';
@@ -42,6 +43,7 @@ export default function App() {
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
 
   const authUser = useAuthStore((s) => s.user);
+  const t = useI18nStore((s) => s.t);
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
   const verifyToken = useAuthStore((s) => s.verifyToken);
@@ -127,7 +129,7 @@ export default function App() {
   }, [document]);
 
   if (verifying) {
-    return <div style={{ padding: 24 }}>Signing you in…</div>;
+    return <div style={{ padding: 24 }}>{t('editor.signingIn')}</div>;
   }
 
   if (showAuthScreen) {
@@ -142,7 +144,7 @@ export default function App() {
   }
 
   if (!document) {
-    return <div style={{ padding: 24 }}>Loading…</div>;
+    return <div style={{ padding: 24 }}>{t('editor.loading')}</div>;
   }
 
   function goHome() {
