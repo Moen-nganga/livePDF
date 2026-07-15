@@ -102,7 +102,10 @@ export function ViewMenu() {
 
   return (
     <div style={{ position: 'relative', display: 'inline-block' }} onMouseEnter={handleMouseEnter}>
-      <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}>
+      <button
+        className={open ? 'tool-active' : undefined}
+        onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}
+      >
         View
       </button>
 

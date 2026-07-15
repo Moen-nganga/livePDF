@@ -93,6 +93,24 @@ button:disabled {
   opacity: 0.4;
 }
 
+/* Buttons previously fell through to the browser's own default :focus
+   treatment (a plain blue outline) since only select/input had an
+   explicit focus style below — clicking any menu trigger (File/Edit/View/
+   Add/Help) left that native blue ring sitting on it, unrelated to the
+   app's own red accent and unrelated to whether its menu was actually
+   open. :focus-visible (rather than :focus) means this only shows for
+   keyboard navigation — a mouse click won't leave a stray ring behind,
+   which is what read as "broken" in practice — while keyboard users still
+   get a clear, on-brand focus indicator. */
+button:focus {
+  outline: none;
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(179, 18, 42, 0.35);
+}
+
 select,
 input[type='text'],
 input[type='number'] {
