@@ -19,7 +19,9 @@ export function AccountMenu({ onUpgradeClick }: Props) {
 
   const [open, setOpen] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const [langFlyoutPos, setLangFlyoutPos] = useState<{ top: number; left: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const langButtonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchSubscription();
@@ -102,16 +104,43 @@ export function AccountMenu({ onUpgradeClick }: Props) {
           overflow: 'hidden',
           zIndex: 30,
         }}>
-          {/* Language item, expands a submenu in place */}
-          <div style={{ position: 'relative' }}>
+          {/* Language item, expands a flyout submenu positioned via measured coordinates */}
+          <div ref={langButtonRef} style={{ position: 'relative' }}>
             <MenuItem
               icon={<GlobeIcon />}
               label={t('menu.language')}
               trailing={LOCALES.find((l) => l.code === locale)?.label}
-              onClick={() => setLanguageMenuOpen((v) => !v)}
+              onClick={() => {
+                const FLYOUT_WIDTH = 160;
+                const GAP = 8;
+                if (!languageMenuOpen && langButtonRef.current) {
+                  const rect = langButtonRef.current.getBoundingClientRect();
+                  const spaceOnLeft = rect.left;
+                  // Prefer opening to the left (per the requested design), but
+                  // fall back to the right if the window is too narrow for
+                  // the flyout to fit on the left without going off-screen.
+                  const left =
+                    spaceOnLeft >= FLYOUT_WIDTH + GAP
+                      ? rect.left - FLYOUT_WIDTH - GAP
+                      : Math.min(rect.right + GAP, window.innerWidth - FLYOUT_WIDTH - GAP);
+                  setLangFlyoutPos({ top: rect.top, left: Math.max(GAP, left) });
+                }
+                setLanguageMenuOpen((v) => !v);
+              }}
             />
-            {languageMenuOpen && (
-              <div style={{ background: '#fafbfc', borderTop: '1px solid var(--color-border)' }}>
+            {languageMenuOpen && langFlyoutPos && (
+              <div style={{
+                position: 'fixed',
+                top: langFlyoutPos.top,
+                left: langFlyoutPos.left,
+                width: 160,
+                background: 'var(--color-surface)',
+                border: '1.5px solid var(--color-border)',
+                borderRadius: 10,
+                boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                overflow: 'hidden',
+                zIndex: 31,
+              }}>
                 {LOCALES.map((l) => (
                   <button
                     key={l.code}
@@ -119,7 +148,7 @@ export function AccountMenu({ onUpgradeClick }: Props) {
                     style={{
                       display: 'flex',
                       width: '100%',
-                      padding: '9px 16px 9px 40px',
+                      padding: '9px 16px',
                       fontSize: 13,
                       textAlign: 'left',
                       background: l.code === locale ? '#e8f0fe' : 'transparent',
