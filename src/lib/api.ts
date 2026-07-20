@@ -38,6 +38,29 @@ export interface SubscriptionInfo {
   cancelAtPeriodEnd?: boolean;
 }
 
+// Thrown specifically when the server rejects a save because of the
+// free-tier weekly document limit -- callers that create new documents
+// (LandingScreen's template/blank flow, uploads) check for this via
+// `instanceof` to show an upgrade prompt instead of a generic save-failed
+// message, since retrying won't help and the autosave hook shouldn't just
+// silently keep failing on every subsequent edit either.
+export class WeeklyLimitError extends Error {
+  limit: number;
+  constructor(message: string, limit: number) {
+    super(message);
+    this.name = 'WeeklyLimitError';
+    this.limit = limit;
+  }
+}
+
+async function parseErrorBody(res: Response): Promise<any> {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
 export const api = {
   async listDocuments(): Promise<DocumentSummary[]> {
     const res = await fetch(`${API_BASE}/api/documents`, { headers: headers() });
@@ -57,7 +80,13 @@ export const api = {
       headers: headers(),
       body: JSON.stringify(doc),
     });
-    if (!res.ok) throw new Error('Failed to save document');
+    if (!res.ok) {
+      const data = await parseErrorBody(res);
+      if (data.error === 'weekly_limit_reached') {
+        throw new WeeklyLimitError(data.message ?? 'Weekly limit reached', data.limit ?? 10);
+      }
+      throw new Error('Failed to save document');
+    }
   },
 
   async deleteDocument(id: string): Promise<void> {

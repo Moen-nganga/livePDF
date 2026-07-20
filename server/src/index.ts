@@ -4,7 +4,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { nanoid } from 'nanoid';
 import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
-import { authRouter, requireAuth } from './auth.js';
+import { authRouter, requireAuth, optionalAuth } from './auth.js';
 import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
 import { createBinanceOrder, verifyBinanceWebhookSignature, handleBinanceWebhookEvent } from './binancePay.js';
 import { usersRepo } from './db.js';
@@ -87,6 +87,12 @@ app.use(express.json({ limit: '25mb' })); // generous: documents embed base64 im
 
 app.use('/api/auth', authRouter);
 
+// Attaches req.userId when a valid session cookie is present, without
+// requiring one -- needed here (not just on /api/auth/me) so the document
+// routes below can tell "signed-in free user" from "anonymous device" when
+// enforcing the weekly creation limit.
+app.use(optionalAuth);
+
 function requireDeviceId(req: express.Request, res: express.Response): string | null {
   const deviceId = req.header('x-device-id');
   if (!deviceId) {
@@ -116,6 +122,9 @@ app.get('/api/documents/:id', async (req, res) => {
   res.json(JSON.parse(row.data));
 });
 
+const WEEKLY_FREE_DOCUMENT_LIMIT = 10;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
 app.put('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -123,6 +132,33 @@ app.put('/api/documents/:id', async (req, res) => {
   if (!doc || typeof doc !== 'object') {
     return res.status(400).json({ error: 'Invalid document body' });
   }
+
+  const userId = (req as any).userId as string | undefined;
+
+  // Only a genuinely NEW document counts against the weekly limit -- an
+  // existing document being autosaved again (the common case, since this
+  // same route fires on every edit) must never be blocked, or editing
+  // would break entirely once someone hit the limit.
+  const existing = await documentsRepo.getById(req.params.id);
+  if (!existing) {
+    const sub = userId ? await subscriptionsRepo.getByUserId(userId) : undefined;
+    const isPremium = sub?.status === 'active';
+
+    if (!isPremium) {
+      const count = await documentsRepo.countCreatedSince(
+        userId ? { userId } : { deviceId },
+        Date.now() - WEEK_MS
+      );
+      if (count >= WEEKLY_FREE_DOCUMENT_LIMIT) {
+        return res.status(403).json({
+          error: 'weekly_limit_reached',
+          message: `Free plan is limited to ${WEEKLY_FREE_DOCUMENT_LIMIT} PDFs per week. Upgrade to Premium for unlimited.`,
+          limit: WEEKLY_FREE_DOCUMENT_LIMIT,
+        });
+      }
+    }
+  }
+
   const now = Date.now();
   await documentsRepo.upsert({
     id: req.params.id,
@@ -131,6 +167,7 @@ app.put('/api/documents/:id', async (req, res) => {
     data: JSON.stringify(doc),
     created_at: doc.createdAt ?? now,
     updated_at: now,
+    user_id: userId,
   });
   res.json({ ok: true, updatedAt: now });
 });

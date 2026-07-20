@@ -142,6 +142,26 @@ export const documentsRepo = {
       [userId, deviceId]
     );
   },
+
+  // Counts documents created since `sinceMs`, scoped to either a signed-in
+  // user (once they've claimed documents onto their account) or an
+  // anonymous device. Used to enforce the free-tier weekly creation limit --
+  // deliberately counts every document (blank, template, or uploaded), since
+  // all three end up as a row in this table via the same PUT endpoint.
+  async countCreatedSince(owner: { userId?: string; deviceId?: string }, sinceMs: number): Promise<number> {
+    if (owner.userId) {
+      const { rows } = await pool.query(
+        'SELECT COUNT(*) FROM documents WHERE user_id = $1 AND created_at >= $2',
+        [owner.userId, sinceMs]
+      );
+      return Number(rows[0].count);
+    }
+    const { rows } = await pool.query(
+      'SELECT COUNT(*) FROM documents WHERE device_id = $1 AND user_id IS NULL AND created_at >= $2',
+      [owner.deviceId, sinceMs]
+    );
+    return Number(rows[0].count);
+  },
 };
 
 export interface ShareRow {

@@ -17,6 +17,7 @@ import { UploadButton } from './components/UploadButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
 import { AuthScreen } from './components/AuthScreen';
+import { UpgradeScreen } from './components/UpgradeScreen';
 import { UnsavedChangesDialog } from './components/UnsavedChangesDialog';
 
 function useOnlineStatus() {
@@ -49,6 +50,7 @@ export default function App() {
   const verifyToken = useAuthStore((s) => s.verifyToken);
   const logout = useAuthStore((s) => s.logout);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
+  const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
 
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
@@ -61,7 +63,7 @@ export default function App() {
   const [verifying, setVerifying] = useState(!!verifyTokenParam);
   const [showLanding, setShowLanding] = useState(!shareToken && !verifyTokenParam);
   const online = useOnlineStatus();
-  const { status: saveStatus, hasUnsavedChanges, saveNow } = useAutoSave();
+  const { status: saveStatus, limitMessage, hasUnsavedChanges, saveNow } = useAutoSave();
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
   // Register the service worker once, on mount — production only. In dev,
@@ -136,6 +138,10 @@ export default function App() {
     return <AuthScreen onBack={() => setShowAuthScreen(false)} />;
   }
 
+  if (showUpgradeScreen) {
+    return <UpgradeScreen onBack={() => setShowUpgradeScreen(false)} />;
+  }
+
   // Show landing screen on fresh loads (not share links) — must come before
   // the document null-check below, since no document is loaded yet at this
   // point (the user will pick one from the landing screen).
@@ -204,13 +210,28 @@ export default function App() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-            {isReadOnly
-              ? ''
-              : online
-                ? saveStatusLabel(saveStatus)
-                : 'Offline — viewing only, edits will not be saved'}
-          </span>
+          {saveStatus === 'limit_reached' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: '#dc2626' }}>
+                {limitMessage ?? 'Weekly limit reached — this document is not being saved.'}
+              </span>
+              <button
+                className="btn-accent"
+                onClick={() => setShowUpgradeScreen(true)}
+                style={{ fontSize: 13, padding: '4px 12px' }}
+              >
+                Upgrade
+              </button>
+            </div>
+          ) : (
+            <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              {isReadOnly
+                ? ''
+                : online
+                  ? saveStatusLabel(saveStatus)
+                  : 'Offline — viewing only, edits will not be saved'}
+            </span>
+          )}
           {isOwner && <UploadButton />}
           <button className="btn-accent" onClick={() => setDownloadDialogOpen(true)}>
             Download PDF

@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/authStore';
 import { useSubscriptionStore } from '../store/subscriptionStore';
 import { useI18nStore } from '../store/i18nStore';
 import { TEMPLATES, type TemplateDefinition } from '../lib/templates';
-import { api, type DocumentSummary } from '../lib/api';
+import { api, WeeklyLimitError, type DocumentSummary } from '../lib/api';
 import { AuthScreen } from './AuthScreen';
 import { AccountMenu } from './AccountMenu';
 import { UpgradeScreen } from './UpgradeScreen';
@@ -91,8 +91,17 @@ export function LandingScreen({ onEnter }: Props) {
       await api.saveDocument(doc);
       loadDocument(doc);
       onEnter();
-    } catch {
-      // Backend save failed — still open the doc locally, autosave will retry
+    } catch (err) {
+      if (err instanceof WeeklyLimitError) {
+        // Don't open the document at all -- it can never actually save,
+        // so letting the user start editing it would just be a trap.
+        // Send them straight to the upgrade screen instead.
+        alert(err.message);
+        setShowUpgradeScreen(true);
+        return;
+      }
+      // A generic failure (network hiccup, server error) — still open the
+      // doc locally, autosave will retry once things recover.
       const doc = {
         id: nanoid(),
         title: template.id === 'blank' ? 'Untitled document' : template.label,
