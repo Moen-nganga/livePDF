@@ -4,22 +4,30 @@ import { useEditorStore } from '../store/editorStore';
 import type { PageObject, TextObject, RectObject } from '../types/document';
 import { WEB_SAFE_FONTS } from '../lib/fonts';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
+import { findMisspelledWords } from '../lib/spellcheck';
+import { SpellCheckPanel } from './SpellCheckPanel';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
-// Each new object is offset slightly from the last, like Google Slides/
-// Canva do, so adding several in a row produces a visible cascade instead
-// of an exact stack. Resets per page since it's just a placement nicety.
 function nextOffset(count: number): { x: number; y: number } {
   const step = 24;
   return { x: 80 + (count % 8) * step, y: 80 + (count % 8) * step };
 }
 
+interface SpellCheckResult {
+  pageIndex: number;
+  pageId: string;
+  objectId: string;
+  word: string;
+}
+
 export function Toolbar() {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
+  const setActivePageIndex = useEditorStore((s) => s.setActivePageIndex);
   const addObject = useEditorStore((s) => s.addObject);
   const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
+  const setSelectedObjectId = useEditorStore((s) => s.setSelectedObjectId);
   const updateObject = useEditorStore((s) => s.updateObject);
   const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
   const setTextPlacementActive = useEditorStore((s) => s.setTextPlacementActive);
@@ -29,20 +37,11 @@ export function Toolbar() {
   const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);
   const selectedText: TextObject | undefined =
     selectedObject?.type === 'text' ? selectedObject : undefined;
-  // A "border" is a rect with no fill — same object type as a regular
-  // rectangle, just styled differently. See addBorder below.
   const selectedBorder: RectObject | undefined =
     selectedObject?.type === 'rect' && !selectedObject.fill ? selectedObject : undefined;
-  // A "highlight" is a rect too — semi-transparent fill, no visible
-  // stroke — tagged with isHighlight so it doesn't get confused with a
-  // regular filled rectangle. See addHighlight below.
   const selectedHighlight: RectObject | undefined =
     selectedObject?.type === 'rect' && selectedObject.isHighlight ? selectedObject : undefined;
 
-  // Drives which +Text/+Rectangle/etc button is highlighted, based on
-  // what's currently selected on the canvas — not which button was last
-  // clicked. Selecting nothing (or an object type with no matching
-  // toolbar button, like 'line') means no add-button is highlighted.
   type ToolKind = 'text' | 'rect' | 'border' | 'highlight' | 'ellipse' | 'image' | null;
   const activeTool: ToolKind = (() => {
     if (!selectedObject) return null;
@@ -61,18 +60,14 @@ export function Toolbar() {
     }
   })();
 
-  // Defaults applied to the NEXT border created via "+ Border" — separate
-  // from selectedBorder, which edits an already-placed one. Persists for
-  // the rest of the session so picking a thickness/color once sticks for
-  // subsequent borders too, similar to how most design tools remember the
-  // last-used style per tool.
   const [borderDefaults, setBorderDefaults] = useState({ strokeWidth: 2, stroke: '#222222' });
-
-  // Same "remember the last-used style" pattern as borderDefaults — picking
-  // a highlight color once carries over to the next highlight you add.
   const [highlightDefaults, setHighlightDefaults] = useState({ fill: '#ffff00' });
-
   const [watermarkDialogOpen, setWatermarkDialogOpen] = useState(false);
+
+  const [spellCheckOpen, setSpellCheckOpen] = useState(false);
+  const [spellCheckLoading, setSpellCheckLoading] = useState(false);
+  const [spellCheckError, setSpellCheckError] = useState<string | null>(null);
+  const [spellCheckResults, setSpellCheckResults] = useState<SpellCheckResult[]>([]);
 
   function updateSelectedText(patch: Partial<TextObject>) {
     if (!activePage || !selectedText) return;
@@ -95,13 +90,6 @@ export function Toolbar() {
     updateObject(activePage.id, selectedObject.id, { rotation: next });
   }
 
-  // Doesn't create a real text object at all — clicking "+ Text" just
-  // arms placement mode. PdfCanvas.tsx owns the actual placeholder
-  // rectangle (drag/resize via Fabric's normal handles) and creates the
-  // real, empty TextObject only once the user double-clicks it to commit.
-  // No placeholder copy is ever inserted — the committed object's text is
-  // '', and its font size is always 14 regardless of how big the
-  // rectangle was drawn; only a manual font-size change afterward alters it.
   function addText() {
     setTextPlacementActive(true);
   }
@@ -133,12 +121,10 @@ export function Toolbar() {
       type: 'rect',
       x,
       y,
-      // Larger default than a regular shape — a border is meant to be
-      // resized over existing content to frame it, not used at icon size.
       width: 240,
       height: 160,
       ...baseDefaults,
-      fill: undefined, // outline only — no fill means nothing underneath is covered
+      fill: undefined,
       stroke: borderDefaults.stroke,
       strokeWidth: borderDefaults.strokeWidth,
       cornerRadius: 0,
@@ -164,10 +150,6 @@ export function Toolbar() {
     addObject(activePage.id, obj);
   }
 
-  // Inserted as a perfectly ordinary, fully editable text object — same
-  // double-click-to-edit, restyle, move, delete behavior as any other text.
-  // "Editable" here just means it's pre-filled with today's date rather
-  // than a fixed, locked-in field.
   function addDate() {
     if (!activePage) return;
     const { x, y } = nextOffset(activePage.objects.length);
@@ -208,11 +190,8 @@ export function Toolbar() {
       width: 200,
       height: 28,
       ...baseDefaults,
-      opacity: 0.4, // semi-transparent so whatever's underneath still reads through
+      opacity: 0.4,
       fill: highlightDefaults.fill,
-      // strokeWidth 0 makes the stroke invisible regardless of its color —
-      // deliberately NOT the CSS keyword 'transparent' here, since
-      // exportPdf.ts's hexToRgb only parses real "#rrggbb" hex strings.
       stroke: '#000000',
       strokeWidth: 0,
       cornerRadius: 0,
@@ -220,9 +199,6 @@ export function Toolbar() {
     addObject(activePage.id, obj);
   }
 
-  // Large, faint, diagonal text centered on the current page. Applies to
-  // this page only (not the whole document) — once placed, it's a normal
-  // text object like any other: movable, resizable, restylable, deletable.
   function addWatermark(text: string) {
     if (!activePage) return;
     const trimmed = text.trim();
@@ -253,6 +229,50 @@ export function Toolbar() {
     };
     addObject(activePage.id, obj);
     setWatermarkDialogOpen(false);
+  }
+
+  async function runSpellCheck() {
+    if (!document) return;
+    setSpellCheckOpen(true);
+    setSpellCheckLoading(true);
+    setSpellCheckError(null);
+    setSpellCheckResults([]);
+
+    try {
+      const results: SpellCheckResult[] = [];
+      // Sequential rather than Promise.all -- keeps things simple and the
+      // dictionary is memoized after the first call anyway, so there's no
+      // real perf cost to awaiting one page at a time.
+      for (let pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
+        const page = document.pages[pageIndex];
+        for (const obj of page.objects) {
+          if (obj.type !== 'text') continue;
+          const misspelled = await findMisspelledWords(obj.text);
+          // One entry per unique word per text object -- jumping just
+          // selects the whole object anyway, so listing the same word
+          // twice because it appears twice in one box adds noise, not value.
+          const seen = new Set<string>();
+          for (const m of misspelled) {
+            const key = m.word.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            results.push({ pageIndex, pageId: page.id, objectId: obj.id, word: m.word });
+          }
+        }
+      }
+      setSpellCheckResults(results);
+    } catch (err) {
+      setSpellCheckError(
+        err instanceof Error ? err.message : 'Could not check spelling — please try again.'
+      );
+    } finally {
+      setSpellCheckLoading(false);
+    }
+  }
+
+  function jumpToSpellCheckResult(pageIndex: number, objectId: string) {
+    setActivePageIndex(pageIndex);
+    setSelectedObjectId(objectId);
   }
 
   function activeToolStyle(tool: NonNullable<typeof activeTool>): React.CSSProperties {
@@ -338,6 +358,12 @@ export function Toolbar() {
 
       <Divider />
 
+      <button onClick={runSpellCheck} title="Check spelling across the whole document">
+        ✓ Check Spelling
+      </button>
+
+      <Divider />
+
       <select
         value={selectedText?.fontFamily ?? ''}
         disabled={!selectedText}
@@ -415,6 +441,15 @@ export function Toolbar() {
       {watermarkDialogOpen && (
         <WatermarkDialog onInsert={addWatermark} onClose={() => setWatermarkDialogOpen(false)} />
       )}
+      {spellCheckOpen && (
+        <SpellCheckPanel
+          loading={spellCheckLoading}
+          error={spellCheckError}
+          results={spellCheckResults}
+          onJumpTo={jumpToSpellCheckResult}
+          onClose={() => setSpellCheckOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -451,20 +486,17 @@ function ToggleButton({
   );
 }
 
-// Curated set rather than a full spectrum picker, matching the reference
-// screenshot's small swatch-grid approach — fast to pick from, no need to
-// fiddle with a color wheel for ordinary text coloring.
 const COLOR_SWATCHES = [
-  '#111111', // near-black, default text color
+  '#111111',
   '#ffffff',
-  '#e03131', // red
-  '#f08c00', // orange
-  '#ffd43b', // yellow
-  '#2f9e44', // green
-  '#1971c2', // blue
-  '#7048e8', // purple
-  '#d6336c', // pink
-  '#868e96', // gray
+  '#e03131',
+  '#f08c00',
+  '#ffd43b',
+  '#2f9e44',
+  '#1971c2',
+  '#7048e8',
+  '#d6336c',
+  '#868e96',
 ];
 
 function ColorPicker({
@@ -580,8 +612,6 @@ function LinkButton({
       setOpen(false);
       return;
     }
-    // Most people type "example.com" without a scheme — PDF link
-    // annotations need a full URI to be clickable, so add one if missing.
     const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     onChange(withScheme);
     setOpen(false);
@@ -815,9 +845,6 @@ function Divider() {
   return <div style={{ width: 1, background: 'var(--color-border)', margin: '2px 4px' }} />;
 }
 
-// Native color input rather than a curated swatch grid — "any color the
-// user wants" needs the full spectrum, which a fixed swatch list can't
-// offer. Browsers render this as their own OS-level color picker.
 function HighlightColorPicker({
   value,
   onChange,
@@ -913,10 +940,6 @@ function WatermarkDialog({
   );
 }
 
-// Fixed list, 1–18 — replaces the old −/+ stepper. Deliberately NOT
-// derived from lib/fonts.ts's FONT_SIZES (that preset list goes well
-// beyond 18, e.g. 24/36/48 for headings) since the requirement here is
-// specifically this narrower 1–18 range, picker-only, no custom typing.
 const FONT_SIZE_OPTIONS = Array.from({ length: 18 }, (_, i) => i + 1);
 
 interface FontSizeDropdownProps {
@@ -934,10 +957,6 @@ function FontSizeDropdown({ value, disabled, onChange }: FontSizeDropdownProps) 
       title={disabled ? 'Select a text box to change its font size' : 'Font size'}
       style={{ width: 56 }}
     >
-      {/* Shown when nothing's selected, or if a document has a stored
-          size outside 1–18 (e.g. from before this dropdown existed) —
-          without this, the <select> would silently fall back to
-          whichever option happens to be first. */}
       {(!value || value < 1 || value > 18) && (
         <option value="" disabled hidden>
           {value ?? 'Size'}
