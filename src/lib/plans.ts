@@ -22,6 +22,10 @@ const PRO_FEATURES = [
   'OCR text recognition',
   'Batch export',
   'Merge & split PDFs',
+  'Spellchecker',
+  'Unlimited PDF documents',
+  'Access to more PDF templates',
+  'AI assistant for writing PDFs',
 ];
 
 export const PLANS: PlanDisplay[] = [

@@ -55,7 +55,8 @@ export function UpgradeScreen({ onBack }: Props) {
             Upgrade to Premium
           </div>
           <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginTop: 6 }}>
-            Unlock clean exports, OCR, batch export, and merge/split tools.
+            Unlock clean exports, OCR, batch export, spellchecking, more templates,
+            unlimited documents, and an AI writing assistant.
           </p>
         </div>
 
