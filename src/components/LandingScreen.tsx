@@ -9,6 +9,7 @@ import { api, WeeklyLimitError, type DocumentSummary } from '../lib/api';
 import { AuthScreen } from './AuthScreen';
 import { AccountMenu } from './AccountMenu';
 import { UpgradeScreen } from './UpgradeScreen';
+import { LimitReachedDialog } from './LimitReachedDialog';
 
 interface Props {
   onEnter: () => void;
@@ -27,6 +28,7 @@ export function LandingScreen({ onEnter }: Props) {
   const t = useI18nStore((s) => s.t);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
+  const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
 
   useEffect(() => {
     api.listDocuments()
@@ -95,9 +97,7 @@ export function LandingScreen({ onEnter }: Props) {
       if (err instanceof WeeklyLimitError) {
         // Don't open the document at all -- it can never actually save,
         // so letting the user start editing it would just be a trap.
-        // Send them straight to the upgrade screen instead.
-        alert(err.message);
-        setShowUpgradeScreen(true);
+        setLimitReachedMessage(err.message);
         return;
       }
       // A generic failure (network hiccup, server error) — still open the
@@ -345,6 +345,16 @@ export function LandingScreen({ onEnter }: Props) {
           )}
         </div>
       </div>
+      {limitReachedMessage && (
+        <LimitReachedDialog
+          message={limitReachedMessage}
+          onClose={() => setLimitReachedMessage(null)}
+          onUpgrade={() => {
+            setLimitReachedMessage(null);
+            setShowUpgradeScreen(true);
+          }}
+        />
+      )}
     </div>
   );
 }
