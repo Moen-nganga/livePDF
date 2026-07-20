@@ -63,13 +63,13 @@ async function parseErrorBody(res: Response): Promise<any> {
 
 export const api = {
   async listDocuments(): Promise<DocumentSummary[]> {
-    const res = await fetch(`${API_BASE}/api/documents`, { headers: headers() });
+    const res = await fetch(`${API_BASE}/api/documents`, { headers: headers(), credentials: 'include' });
     if (!res.ok) throw new Error('Failed to list documents');
     return res.json();
   },
 
   async getDocument(id: string): Promise<PDFDocument> {
-    const res = await fetch(`${API_BASE}/api/documents/${id}`, { headers: headers() });
+    const res = await fetch(`${API_BASE}/api/documents/${id}`, { headers: headers(), credentials: 'include' });
     if (!res.ok) throw new Error('Failed to load document');
     return res.json();
   },
@@ -78,6 +78,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/documents/${doc.id}`, {
       method: 'PUT',
       headers: headers(),
+      credentials: 'include',
       body: JSON.stringify(doc),
     });
     if (!res.ok) {
@@ -93,6 +94,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/documents/${id}`, {
       method: 'DELETE',
       headers: headers(),
+      credentials: 'include',
     });
     if (!res.ok) throw new Error('Failed to delete document');
   },
@@ -101,6 +103,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/documents/${documentId}/shares`, {
       method: 'POST',
       headers: headers(),
+      credentials: 'include',
       body: JSON.stringify({ access }),
     });
     if (!res.ok) throw new Error('Failed to create share link');
@@ -110,6 +113,7 @@ export const api = {
   async listShares(documentId: string): Promise<ShareInfo[]> {
     const res = await fetch(`${API_BASE}/api/documents/${documentId}/shares`, {
       headers: headers(),
+      credentials: 'include',
     });
     if (!res.ok) throw new Error('Failed to load share links');
     return res.json();
@@ -119,6 +123,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/shares/${token}`, {
       method: 'DELETE',
       headers: headers(),
+      credentials: 'include',
     });
     if (!res.ok) throw new Error('Failed to revoke share link');
   },
