@@ -266,7 +266,7 @@ export default function App() {
         />
       )}
 
-      {!isReadOnly && <Toolbar />}
+      {!isReadOnly && <Toolbar onRequirePremium={() => setShowUpgradeScreen(true)} />}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {isOwner && <PageNav />}

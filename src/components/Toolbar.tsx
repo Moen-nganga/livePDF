@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
-import type { PageObject, TextObject, RectObject } from '../types/document';
+import { useSubscriptionStore } from '../store/subscriptionStore';
+import type { PageObject, TextObject, RectObject, ImageObject } from '../types/document';
 import { WEB_SAFE_FONTS } from '../lib/fonts';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 import { findMisspelledWords } from '../lib/spellcheck';
 import { SpellCheckPanel } from './SpellCheckPanel';
+import { SignatureDialog } from './SignatureDialog';
+import { PremiumRequiredDialog } from './PremiumRequiredDialog';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
@@ -21,7 +24,12 @@ interface SpellCheckResult {
   word: string;
 }
 
-export function Toolbar() {
+interface ToolbarProps {
+  /** Called when a free-tier user tries to use a premium-gated tool and clicks "Upgrade" in the resulting prompt. */
+  onRequirePremium?: () => void;
+}
+
+export function Toolbar({ onRequirePremium }: ToolbarProps) {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
   const setActivePageIndex = useEditorStore((s) => s.setActivePageIndex);
@@ -32,6 +40,16 @@ export function Toolbar() {
   const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
   const setTextPlacementActive = useEditorStore((s) => s.setTextPlacementActive);
   const { triggerImagePick, fileInputElement } = useImageAdd();
+
+  const subscription = useSubscriptionStore((s) => s.subscription);
+  // Client-side gate only -- there's no server resource being consumed by
+  // adding a signature (unlike the weekly document-creation limit, which
+  // is enforced server-side too), so this restricts the UI but a
+  // technically determined free user could bypass it via devtools. Worth
+  // revisiting with a server-side check if this ever needs to be airtight.
+  const isPremium =
+    subscription?.status === 'active' &&
+    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
 
   const activePage = document?.pages[activePageIndex];
   const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);
@@ -68,6 +86,9 @@ export function Toolbar() {
   const [spellCheckLoading, setSpellCheckLoading] = useState(false);
   const [spellCheckError, setSpellCheckError] = useState<string | null>(null);
   const [spellCheckResults, setSpellCheckResults] = useState<SpellCheckResult[]>([]);
+
+  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const [premiumPromptOpen, setPremiumPromptOpen] = useState(false);
 
   function updateSelectedText(patch: Partial<TextObject>) {
     if (!activePage || !selectedText) return;
@@ -275,6 +296,40 @@ export function Toolbar() {
     setSelectedObjectId(objectId);
   }
 
+  function handleSignatureClick() {
+    if (!isPremium) {
+      setPremiumPromptOpen(true);
+      return;
+    }
+    setSignatureDialogOpen(true);
+  }
+
+  // Both draw and typed signatures arrive here as a plain PNG data URL --
+  // placed as a normal ImageObject, same as an uploaded image, so it needs
+  // no special handling anywhere else (export, dragging, resizing, delete
+  // all already work for images).
+  function insertSignature(dataUrl: string, width: number, height: number) {
+    if (!activePage) return;
+    const { x, y } = nextOffset(activePage.objects.length);
+    // Signatures are typically placed at a modest, readable size regardless
+    // of how large the source canvas was -- cap the placed width so a
+    // wide typed name doesn't dominate the page, keeping aspect ratio.
+    const maxWidth = 220;
+    const scale = width > maxWidth ? maxWidth / width : 1;
+    const obj: ImageObject = {
+      id: nanoid(),
+      type: 'image',
+      x,
+      y,
+      width: width * scale,
+      height: height * scale,
+      ...baseDefaults,
+      src: dataUrl,
+    };
+    addObject(activePage.id, obj);
+    setSignatureDialogOpen(false);
+  }
+
   function activeToolStyle(tool: NonNullable<typeof activeTool>): React.CSSProperties {
     return activeTool === tool
       ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
@@ -354,6 +409,10 @@ export function Toolbar() {
 
       <button onClick={() => setWatermarkDialogOpen(true)} title="Add a diagonal watermark to the current page">
         + Watermark
+      </button>
+
+      <button onClick={handleSignatureClick} title={isPremium ? 'Add a signature' : 'Add a signature (Premium)'}>
+        {isPremium ? '+ Signature' : '⭐ Signature'}
       </button>
 
       <Divider />
@@ -440,6 +499,19 @@ export function Toolbar() {
       {fileInputElement}
       {watermarkDialogOpen && (
         <WatermarkDialog onInsert={addWatermark} onClose={() => setWatermarkDialogOpen(false)} />
+      )}
+      {signatureDialogOpen && (
+        <SignatureDialog onInsert={insertSignature} onClose={() => setSignatureDialogOpen(false)} />
+      )}
+      {premiumPromptOpen && (
+        <PremiumRequiredDialog
+          featureName="Signatures"
+          onClose={() => setPremiumPromptOpen(false)}
+          onUpgrade={() => {
+            setPremiumPromptOpen(false);
+            onRequirePremium?.();
+          }}
+        />
       )}
       {spellCheckOpen && (
         <SpellCheckPanel
