@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { useEditorStore } from './store/editorStore';
 import { useAuthStore } from './store/authStore';
 import { useI18nStore } from './store/i18nStore';
+import { useSubscriptionStore } from './store/subscriptionStore';
 import { useAutoSave } from './hooks/useAutoSave';
 import { cacheDocumentForOffline } from './lib/offlineCache';
 import { api } from './lib/api';
+import type { PDFDocument } from './types/document';
 import { Toolbar } from './components/Toolbar';
 import { EditableTitle } from './components/EditableTitle';
 import { FileMenu } from './components/FileMenu';
@@ -19,6 +21,7 @@ import { LandingScreen } from './components/LandingScreen';
 import { AuthScreen } from './components/AuthScreen';
 import { UpgradeScreen } from './components/UpgradeScreen';
 import { UnsavedChangesDialog } from './components/UnsavedChangesDialog';
+import { AIChatWidget } from './components/AIChatWidget';
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -33,6 +36,26 @@ function useOnlineStatus() {
     };
   }, []);
   return online;
+}
+
+// Plain-text summary of a document's content, sent as context to the AI
+// chat widget so it can answer questions about what's actually on the
+// page. Deliberately text-only (skips image data entirely -- base64
+// image payloads would blow past the context size cap for no benefit,
+// since the model can't usefully reason about raw pixel data anyway).
+function buildDocumentContext(doc: PDFDocument): string {
+  const lines: string[] = [`Document title: ${doc.title}`, `Pages: ${doc.pages.length}`];
+  doc.pages.forEach((page, i) => {
+    const textOnPage = page.objects
+      .filter((o) => o.type === 'text')
+      .map((o) => o.text)
+      .filter((t) => t.trim())
+      .join(' | ');
+    if (textOnPage) {
+      lines.push(`Page ${i + 1}: ${textOnPage}`);
+    }
+  });
+  return lines.join('\n');
 }
 
 export default function App() {
@@ -51,6 +74,14 @@ export default function App() {
   const logout = useAuthStore((s) => s.logout);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
+
+  const subscription = useSubscriptionStore((s) => s.subscription);
+  // Same client-side-only caveat as Toolbar's signature gating -- this
+  // just decides what the widget shows/allows in the UI. The real
+  // enforcement is server-side, in POST /api/chat's own premium check.
+  const isPremium =
+    subscription?.status === 'active' &&
+    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
 
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
@@ -130,29 +161,6 @@ export default function App() {
     if (document) cacheDocumentForOffline(document);
   }, [document]);
 
-  if (verifying) {
-    return <div style={{ padding: 24 }}>{t('editor.signingIn')}</div>;
-  }
-
-  if (showAuthScreen) {
-    return <AuthScreen onBack={() => setShowAuthScreen(false)} />;
-  }
-
-  if (showUpgradeScreen) {
-    return <UpgradeScreen onBack={() => setShowUpgradeScreen(false)} />;
-  }
-
-  // Show landing screen on fresh loads (not share links) — must come before
-  // the document null-check below, since no document is loaded yet at this
-  // point (the user will pick one from the landing screen).
-  if (showLanding) {
-    return <LandingScreen onEnter={() => setShowLanding(false)} />;
-  }
-
-  if (!document) {
-    return <div style={{ padding: 24 }}>{t('editor.loading')}</div>;
-  }
-
   function goHome() {
     if (hasUnsavedChanges) {
       setShowUnsavedDialog(true);
@@ -161,129 +169,162 @@ export default function App() {
     setShowLanding(true);
   }
 
-  const isOwner = shareSession === null;
-  const isReadOnly = shareSession?.access === 'view';
+  // Everything below builds up `content` — whichever single screen is
+  // active right now — instead of returning early from each branch, so
+  // the AIChatWidget at the very end can be rendered once, wrapping
+  // whichever screen is showing, and therefore actually appear on every
+  // page as intended rather than needing to be duplicated into each one.
+  let content: React.ReactNode;
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <header
-        className="app-header"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 16px',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          {isOwner && (
-            <button
-              onClick={goHome}
-              title="Home"
-              aria-label="Home"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '6px 8px',
-              }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                  d="M4 11.5L12 4l8 7.5M6 9.5V20h4.5v-5.5h3V20H18V9.5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          )}
-          {isOwner && <FileMenu />}
-          {!isReadOnly && <EditMenu />}
-          {!isReadOnly && <AddMenu />}
-          <HelpMenu />
-          <EditableTitle />
-          {isReadOnly && <span className="badge badge-warning">View only</span>}
-          {shareSession?.access === 'edit' && (
-            <span className="badge badge-success">Editing via shared link</span>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          {saveStatus === 'limit_reached' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13, color: '#dc2626' }}>
-                {limitMessage ?? 'Weekly limit reached — this document is not being saved.'}
-              </span>
-              <button
-                className="btn-accent"
-                onClick={() => setShowUpgradeScreen(true)}
-                style={{ fontSize: 13, padding: '4px 12px' }}
-              >
-                Upgrade
-              </button>
-            </div>
-          ) : (
-            <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              {isReadOnly
-                ? ''
-                : online
-                  ? saveStatusLabel(saveStatus)
-                  : 'Offline — viewing only, edits will not be saved'}
-            </span>
-          )}
-          {isOwner && <UploadButton />}
-          <button className="btn-accent" onClick={() => setDownloadDialogOpen(true)}>
-            Download PDF
-          </button>
-          {authStatus === 'authenticated' && authUser ? (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{authUser.email}</span>
-              <button onClick={() => logout()}>Sign out</button>
-            </div>
-          ) : (
-            <button onClick={() => setShowAuthScreen(true)}>Sign in</button>
-          )}
-        </div>
-      </header>
+  if (verifying) {
+    content = <div style={{ padding: 24 }}>{t('editor.signingIn')}</div>;
+  } else if (showAuthScreen) {
+    content = <AuthScreen onBack={() => setShowAuthScreen(false)} />;
+  } else if (showUpgradeScreen) {
+    content = <UpgradeScreen onBack={() => setShowUpgradeScreen(false)} />;
+  } else if (showLanding) {
+    // Show landing screen on fresh loads (not share links) — must come
+    // before the document null-check below, since no document is loaded
+    // yet at this point (the user will pick one from the landing screen).
+    content = <LandingScreen onEnter={() => setShowLanding(false)} />;
+  } else if (!document) {
+    content = <div style={{ padding: 24 }}>{t('editor.loading')}</div>;
+  } else {
+    const isOwner = shareSession === null;
+    const isReadOnly = shareSession?.access === 'view';
 
-      {downloadDialogOpen && document && (
-        <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
-      )}
-
-      {showUnsavedDialog && (
-        <UnsavedChangesDialog
-          onSave={async () => {
-            const ok = await saveNow();
-            if (ok) setShowUnsavedDialog(false);
-            return ok;
-          }}
-          onDiscard={() => {
-            setShowUnsavedDialog(false);
-            setShowLanding(true);
-          }}
-          onCancel={() => setShowUnsavedDialog(false)}
-        />
-      )}
-
-      {!isReadOnly && <Toolbar onRequirePremium={() => setShowUpgradeScreen(true)} />}
-
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {isOwner && <PageNav />}
-        <main
-          className="app-canvas-area"
+    content = (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+        <header
+          className="app-header"
           style={{
-            flex: 1,
-            overflow: 'auto',
             display: 'flex',
-            justifyContent: 'center',
-            padding: 24,
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 16px',
           }}
         >
-          <PdfCanvas page={document.pages[activePageIndex] ?? document.pages[0]} readOnly={isReadOnly} />
-        </main>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            {isOwner && (
+              <button
+                onClick={goHome}
+                title="Home"
+                aria-label="Home"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '6px 8px',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M4 11.5L12 4l8 7.5M6 9.5V20h4.5v-5.5h3V20H18V9.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            )}
+            {isOwner && <FileMenu />}
+            {!isReadOnly && <EditMenu />}
+            {!isReadOnly && <AddMenu />}
+            <HelpMenu />
+            <EditableTitle />
+            {isReadOnly && <span className="badge badge-warning">View only</span>}
+            {shareSession?.access === 'edit' && (
+              <span className="badge badge-success">Editing via shared link</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            {saveStatus === 'limit_reached' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#dc2626' }}>
+                  {limitMessage ?? 'Weekly limit reached — this document is not being saved.'}
+                </span>
+                <button
+                  className="btn-accent"
+                  onClick={() => setShowUpgradeScreen(true)}
+                  style={{ fontSize: 13, padding: '4px 12px' }}
+                >
+                  Upgrade
+                </button>
+              </div>
+            ) : (
+              <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                {isReadOnly
+                  ? ''
+                  : online
+                    ? saveStatusLabel(saveStatus)
+                    : 'Offline — viewing only, edits will not be saved'}
+              </span>
+            )}
+            {isOwner && <UploadButton />}
+            <button className="btn-accent" onClick={() => setDownloadDialogOpen(true)}>
+              Download PDF
+            </button>
+            {authStatus === 'authenticated' && authUser ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{authUser.email}</span>
+                <button onClick={() => logout()}>Sign out</button>
+              </div>
+            ) : (
+              <button onClick={() => setShowAuthScreen(true)}>Sign in</button>
+            )}
+          </div>
+        </header>
+
+        {downloadDialogOpen && document && (
+          <DownloadDialog document={document} onClose={() => setDownloadDialogOpen(false)} />
+        )}
+
+        {showUnsavedDialog && (
+          <UnsavedChangesDialog
+            onSave={async () => {
+              const ok = await saveNow();
+              if (ok) setShowUnsavedDialog(false);
+              return ok;
+            }}
+            onDiscard={() => {
+              setShowUnsavedDialog(false);
+              setShowLanding(true);
+            }}
+            onCancel={() => setShowUnsavedDialog(false)}
+          />
+        )}
+
+        {!isReadOnly && <Toolbar onRequirePremium={() => setShowUpgradeScreen(true)} />}
+
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          {isOwner && <PageNav />}
+          <main
+            className="app-canvas-area"
+            style={{
+              flex: 1,
+              overflow: 'auto',
+              display: 'flex',
+              justifyContent: 'center',
+              padding: 24,
+            }}
+          >
+            <PdfCanvas page={document.pages[activePageIndex] ?? document.pages[0]} readOnly={isReadOnly} />
+          </main>
+        </div>
       </div>
-    </div>
+    );
+  }
+
+  return (
+    <>
+      {content}
+      <AIChatWidget
+        isPremium={isPremium}
+        documentContext={document ? buildDocumentContext(document) : undefined}
+        onRequirePremium={() => setShowUpgradeScreen(true)}
+      />
+    </>
   );
 }
 

@@ -61,6 +61,11 @@ async function parseErrorBody(res: Response): Promise<any> {
   }
 }
 
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
 export const api = {
   async listDocuments(): Promise<DocumentSummary[]> {
     const res = await fetch(`${API_BASE}/api/documents`, { headers: headers(), credentials: 'include' });
@@ -207,5 +212,22 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error ?? 'Failed to start checkout');
     return data.url;
+  },
+
+  async sendChatMessage(messages: ChatMessage[], documentContext?: string): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ messages, documentContext }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (data.error === 'upgrade_required') {
+        throw new Error('upgrade_required');
+      }
+      throw new Error(data.error ?? 'Failed to get a response');
+    }
+    return data.reply;
   },
 };

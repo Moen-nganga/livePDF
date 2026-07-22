@@ -37,8 +37,6 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
   const setSelectedObjectId = useEditorStore((s) => s.setSelectedObjectId);
   const updateObject = useEditorStore((s) => s.updateObject);
-  const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
-  const setTextPlacementActive = useEditorStore((s) => s.setTextPlacementActive);
   const { triggerImagePick, fileInputElement } = useImageAdd();
 
   const subscription = useSubscriptionStore((s) => s.subscription);
@@ -112,27 +110,26 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   }
 
   function addText() {
-    setTextPlacementActive(true);
-  }
-
-  function addRect() {
-    if (!activePage) return;
-    const { x, y } = nextOffset(activePage.objects.length);
-    const obj: PageObject = {
-      id: nanoid(),
-      type: 'rect',
-      x,
-      y,
-      width: 160,
-      height: 100,
-      ...baseDefaults,
-      fill: '#cce5ff',
-      stroke: '#3380cc',
-      strokeWidth: 1,
-      cornerRadius: 4,
-    };
-    addObject(activePage.id, obj);
-  }
+  if (!activePage) return;
+  const { x, y } = nextOffset(activePage.objects.length);
+  const obj: PageObject = {
+    id: nanoid(),
+    type: 'text',
+    x, y,
+    width: 200,
+    height: 40,
+    ...baseDefaults,
+    text: 'Edit this text',
+    fontSize: 14,
+    fontFamily: 'Helvetica',
+    color: '#111111',
+    bold: false,
+    italic: false,
+    strikethrough: false,
+    align: 'left',
+  };
+  addObject(activePage.id, obj);
+}
 
   function addBorder() {
     if (!activePage) return;
@@ -170,6 +167,25 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
     };
     addObject(activePage.id, obj);
   }
+
+  function addRect() {
+  if (!activePage) return;
+  const { x, y } = nextOffset(activePage.objects.length);
+  const obj: PageObject = {
+    id: nanoid(),
+    type: 'rect',
+    x,
+    y,
+    width: 160,
+    height: 100,
+    ...baseDefaults,
+    fill: '#cce5ff',
+    stroke: '#3380cc',
+    strokeWidth: 1,
+    cornerRadius: 4,
+  };
+  addObject(activePage.id, obj);
+}
 
   function addDate() {
     if (!activePage) return;
@@ -347,16 +363,9 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         flexWrap: 'wrap',
       }}
     >
-      <button
-        onClick={addText}
-        style={
-          activeTool === 'text' || textPlacementActive
-            ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
-            : {}
-        }
-      >
-        + Text
-      </button>
+      <button onClick={addText} style={activeToolStyle('text')}>
+  + Text
+</button>
       <button onClick={addRect} style={activeToolStyle('rect')}>
         + Rectangle
       </button>

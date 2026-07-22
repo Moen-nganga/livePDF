@@ -7,6 +7,7 @@ import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
 import { authRouter, requireAuth, optionalAuth } from './auth.js';
 import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
 import { createBinanceOrder, verifyBinanceWebhookSignature, handleBinanceWebhookEvent } from './binancePay.js';
+import { getChatReply, type ChatMessage } from './ai.js';
 import { usersRepo } from './db.js';
 import type { PlanId } from './plans.js';
 
@@ -308,6 +309,34 @@ app.post('/api/checkout/binance', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to start checkout' });
+  }
+});
+
+// --- AI chat widget ---
+// Gated server-side, unlike the client-only checks on things like
+// Signatures -- every call here costs a real request against Gemini's
+// free-tier daily quota, so this one needs actual enforcement, not just a
+// hidden UI element a determined user could bypass.
+app.post('/api/chat', requireAuth, async (req, res) => {
+  const userId = (req as any).userId;
+  const sub = await subscriptionsRepo.getByUserId(userId);
+  const isPremium = sub?.status === 'active' && (sub.plan_id === 'pro_monthly' || sub.plan_id === 'pro_yearly');
+  if (!isPremium) {
+    return res.status(403).json({ error: 'upgrade_required' });
+  }
+
+  const messages = req.body?.messages as ChatMessage[] | undefined;
+  const documentContext = req.body?.documentContext as string | undefined;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'Missing messages' });
+  }
+
+  try {
+    const reply = await getChatReply(messages, documentContext);
+    res.json({ reply });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to get a response from the assistant. Please try again.' });
   }
 });
 
