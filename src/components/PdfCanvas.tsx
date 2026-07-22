@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as fabric from 'fabric';
+import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import type { Page, PageObject } from '../types/document';
 
@@ -24,7 +25,15 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const updateObject = useEditorStore((s) => s.updateObject);
   const removeObject = useEditorStore((s) => s.removeObject);
+  const addObject = useEditorStore((s) => s.addObject);
   const setSelectedObjectId = useEditorStore((s) => s.setSelectedObjectId);
+  const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
+  const setTextPlacementActive = useEditorStore((s) => s.setTextPlacementActive);
+
+  // Tracks the in-progress placeholder rectangle while the user is
+  // dragging out its size, between mouse:down and mouse:up. Not store
+  // state -- this is purely local to the current drag gesture.
+  const drawingRef = useRef<{ rect: fabric.Rect; startX: number; startY: number } | null>(null);
 
   // Set up the Fabric canvas once per page. We deliberately do NOT let
   // React render the <canvas> element itself (no JSX <canvas> below).
@@ -89,6 +98,62 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       canvas.defaultCursor = 'default';
     });
 
+    // Commit a text placeholder into a real TextObject on double-click.
+    // The placeholder rect drawn while textPlacementActive is true (see
+    // the dedicated effect below) is tagged with isTextPlaceholder so we
+    // can tell it apart from a normal border/rect object here.
+    canvas.on('mouse:dblclick', (e) => {
+      const target = e.target as (fabric.Object & { isTextPlaceholder?: boolean }) | undefined;
+      if (!target?.isTextPlaceholder) return;
+
+      const id = nanoid();
+      const width = (target.width ?? 160) * (target.scaleX ?? 1);
+      const height = (target.height ?? 32) * (target.scaleY ?? 1);
+      const left = target.left ?? 0;
+      const top = target.top ?? 0;
+      const angle = target.angle ?? 0;
+
+      canvas.remove(target);
+
+      const textbox = new fabric.Textbox('', {
+        left,
+        top,
+        width,
+        angle,
+        fontSize: 14,
+        fontFamily: 'Helvetica',
+        fill: '#111111',
+        textAlign: 'left',
+      });
+      (textbox as fabric.Object & { id?: string }).id = id;
+      canvas.add(textbox);
+      canvas.setActiveObject(textbox);
+      textbox.enterEditing();
+      textbox.selectAll();
+      canvas.requestRenderAll();
+
+      // Same id as the Fabric object above, so the "sync NEW objects"
+      // effect below sees existingIds already has it and skips re-adding.
+      addObject(page.id, {
+        id,
+        type: 'text',
+        x: left,
+        y: top,
+        width,
+        height,
+        rotation: angle,
+        opacity: 1,
+        text: '',
+        fontSize: 14,
+        fontFamily: 'Helvetica',
+        color: '#111111',
+        bold: false,
+        italic: false,
+        strikethrough: false,
+        align: 'left',
+      });
+    });
+
     return () => {
       canvas.dispose();
       fabricRef.current = null;
@@ -100,6 +165,98 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page.id, readOnly]);
+
+  // Drag-to-draw the adjustable text placeholder while placement mode is
+  // armed (toolbar's "+ Text" button sets textPlacementActive via the
+  // store). This is scoped to its own effect, added/removed only when
+  // textPlacementActive flips, so it doesn't interfere with normal
+  // selection/dragging the rest of the time.
+  useEffect(() => {
+    if (!fabricRef.current || readOnly || !textPlacementActive) return;
+    // Reassigned to a variable TS knows is non-null for the lifetime of
+    // this effect. `fabricRef.current` itself is typed `Canvas | null`,
+    // and TS can't carry the narrowing above into the nested
+    // onMouseDown/onMouseMove/onMouseUp function declarations below (it
+    // can't prove they run before something could reassign the ref) —
+    // hence "canvas is possibly null" at every use inside those closures.
+    // `canvas` here is a const capturing the already-checked value, so
+    // every reference to it below is guaranteed non-null.
+    const canvas: fabric.Canvas = fabricRef.current;
+
+    canvas.discardActiveObject();
+    canvas.selection = false;
+    canvas.defaultCursor = 'crosshair';
+    canvas.requestRenderAll();
+
+    function onMouseDown(e: fabric.TPointerEventInfo) {
+      const pointer = canvas.getScenePoint(e.e);
+      const rect = new fabric.Rect({
+        left: pointer.x,
+        top: pointer.y,
+        width: 1,
+        height: 1,
+        fill: 'rgba(51, 128, 204, 0.08)',
+        stroke: '#3380cc',
+        strokeWidth: 1,
+        strokeDashArray: [4, 4],
+        selectable: false,
+        evented: false,
+      });
+      (rect as fabric.Object & { isTextPlaceholder?: boolean }).isTextPlaceholder = true;
+      canvas.add(rect);
+      drawingRef.current = { rect, startX: pointer.x, startY: pointer.y };
+    }
+
+    function onMouseMove(e: fabric.TPointerEventInfo) {
+      const drawing = drawingRef.current;
+      if (!drawing) return;
+      const pointer = canvas.getScenePoint(e.e);
+      const { rect, startX, startY } = drawing;
+      rect.set({
+        left: Math.min(startX, pointer.x),
+        top: Math.min(startY, pointer.y),
+        width: Math.abs(pointer.x - startX),
+        height: Math.abs(pointer.y - startY),
+      });
+      canvas.requestRenderAll();
+    }
+
+    function onMouseUp() {
+      const drawing = drawingRef.current;
+      drawingRef.current = null;
+      if (!drawing) return;
+      const { rect } = drawing;
+
+      // A plain click with no real drag -- fall back to a sensible
+      // default size rather than leaving a near-invisible sliver.
+      if ((rect.width ?? 0) < 10 || (rect.height ?? 0) < 10) {
+        rect.set({ width: 160, height: 32 });
+      }
+
+      // Hand off to Fabric's normal selectable/resizable object so the
+      // user can adjust it with the standard handles before committing it
+      // (via double-click) into a real TextObject.
+      rect.set({ selectable: true, evented: true, hasControls: true, hasBorders: true });
+      canvas.setActiveObject(rect);
+      canvas.requestRenderAll();
+
+      canvas.selection = true;
+      canvas.defaultCursor = 'default';
+      setTextPlacementActive(false); // un-arms the toolbar button
+    }
+
+    canvas.on('mouse:down', onMouseDown);
+    canvas.on('mouse:move', onMouseMove);
+    canvas.on('mouse:up', onMouseUp);
+
+    return () => {
+      canvas.off('mouse:down', onMouseDown);
+      canvas.off('mouse:move', onMouseMove);
+      canvas.off('mouse:up', onMouseUp);
+      canvas.selection = !readOnly;
+      canvas.defaultCursor = 'default';
+    };
+  }, [textPlacementActive, readOnly, setTextPlacementActive]);
 
   // Render background image (uploaded PDF page) when it changes
   useEffect(() => {
