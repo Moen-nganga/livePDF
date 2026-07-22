@@ -169,6 +169,19 @@ export default function App() {
     setShowLanding(true);
   }
 
+  // Every "Upgrade" trigger in this component funnels through here rather
+  // than calling setShowUpgradeScreen directly -- paying for Premium
+  // requires an account (Stripe/Binance checkout both need requireAuth
+  // server-side), so an anonymous visitor clicking Upgrade needs to sign
+  // in first, not land on a checkout screen that will just fail.
+  function requestUpgrade() {
+    if (authStatus !== 'authenticated') {
+      setShowAuthScreen(true);
+      return;
+    }
+    setShowUpgradeScreen(true);
+  }
+
   // Everything below builds up `content` — whichever single screen is
   // active right now — instead of returning early from each branch, so
   // the AIChatWidget at the very end can be rendered once, wrapping
@@ -246,7 +259,7 @@ export default function App() {
                 </span>
                 <button
                   className="btn-accent"
-                  onClick={() => setShowUpgradeScreen(true)}
+                  onClick={requestUpgrade}
                   style={{ fontSize: 13, padding: '4px 12px' }}
                 >
                   Upgrade
@@ -295,7 +308,7 @@ export default function App() {
           />
         )}
 
-        {!isReadOnly && <Toolbar onRequirePremium={() => setShowUpgradeScreen(true)} />}
+        {!isReadOnly && <Toolbar onRequirePremium={requestUpgrade} />}
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {isOwner && <PageNav />}
@@ -322,7 +335,7 @@ export default function App() {
       <AIChatWidget
         isPremium={isPremium}
         documentContext={document ? buildDocumentContext(document) : undefined}
-        onRequirePremium={() => setShowUpgradeScreen(true)}
+        onRequirePremium={requestUpgrade}
       />
     </>
   );

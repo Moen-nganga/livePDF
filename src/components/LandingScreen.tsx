@@ -79,6 +79,18 @@ export function LandingScreen({ onEnter }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Same reasoning as App.tsx's identical helper: paying for Premium
+  // requires an account, so an anonymous visitor (e.g. one who just hit
+  // the weekly document limit without ever signing in) needs to sign in
+  // first rather than landing on a checkout screen that will just fail.
+  function requestUpgrade() {
+    if (authStatus !== 'authenticated') {
+      setShowAuthScreen(true);
+      return;
+    }
+    setShowUpgradeScreen(true);
+  }
+
   async function openTemplate(template: TemplateDefinition) {
     if (creating) return;
     setCreating(template.id);
@@ -178,7 +190,7 @@ export function LandingScreen({ onEnter }: Props) {
             {t('landing.savedAutomatically')}
           </div>
           {authStatus === 'authenticated' && authUser ? (
-            <AccountMenu onUpgradeClick={() => setShowUpgradeScreen(true)} />
+            <AccountMenu onUpgradeClick={requestUpgrade} />
           ) : (
             <button
               onClick={() => setShowAuthScreen(true)}
@@ -351,7 +363,7 @@ export function LandingScreen({ onEnter }: Props) {
           onClose={() => setLimitReachedMessage(null)}
           onUpgrade={() => {
             setLimitReachedMessage(null);
-            setShowUpgradeScreen(true);
+            requestUpgrade();
           }}
         />
       )}
