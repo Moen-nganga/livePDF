@@ -3,6 +3,7 @@ interface SpellCheckResult {
   pageId: string;
   objectId: string;
   word: string;
+  line: number;
 }
 
 interface Props {
@@ -51,7 +52,7 @@ export function SpellCheckPanel({ loading, error, results, onJumpTo, onClose }: 
 
         {!loading && !error && results.length === 0 && (
           <p style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-            NO SPELLING ERRORS FOUND.
+            No spelling errors found. 🎉
           </p>
         )}
 
@@ -81,7 +82,7 @@ export function SpellCheckPanel({ loading, error, results, onJumpTo, onClose }: 
                   </span>
                 </span>
                 <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                  Page {r.pageIndex + 1}
+                  Page {r.pageIndex + 1}, Line {r.line}
                 </span>
               </button>
             ))}

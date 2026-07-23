@@ -22,6 +22,17 @@ interface SpellCheckResult {
   pageId: string;
   objectId: string;
   word: string;
+  /** 1-indexed line within the text object's own content (split on \n), not the page as a whole. */
+  line: number;
+}
+
+// Counts newlines before a given character offset to find which line (1-
+// indexed) that offset falls on within a text object's own content. This
+// is about line breaks *within* one text box, not a page-wide line number
+// -- a page can have several separate text objects, each with their own
+// internal line 1, 2, 3...
+function lineNumberAt(text: string, charIndex: number): number {
+  return text.slice(0, charIndex).split('\n').length;
 }
 
 interface ToolbarProps {
@@ -111,15 +122,27 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
     updateObject(activePage.id, selectedObject.id, { rotation: next });
   }
 
-  // Doesn't create a real text object at all — clicking "+ Text" just
-  // arms placement mode. PdfCanvas.tsx owns the actual placeholder
-  // rectangle (drag/resize via Fabric's normal handles) and creates the
-  // real, empty TextObject only once the user double-clicks it to commit.
-  // No placeholder copy is ever inserted — the committed object's text is
-  // '', and its font size is always 14 regardless of how big the
-  // rectangle was drawn; only a manual font-size change afterward alters it.
   function addText() {
     setTextPlacementActive(true);
+  }
+
+  function addRect() {
+    if (!activePage) return;
+    const { x, y } = nextOffset(activePage.objects.length);
+    const obj: PageObject = {
+      id: nanoid(),
+      type: 'rect',
+      x,
+      y,
+      width: 160,
+      height: 100,
+      ...baseDefaults,
+      fill: '#cce5ff',
+      stroke: '#3380cc',
+      strokeWidth: 1,
+      cornerRadius: 4,
+    };
+    addObject(activePage.id, obj);
   }
 
   function addBorder() {
@@ -155,25 +178,6 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       fill: '#ffe5b3',
       stroke: '#cc9933',
       strokeWidth: 1,
-    };
-    addObject(activePage.id, obj);
-  }
-
-  function addRect() {
-    if (!activePage) return;
-    const { x, y } = nextOffset(activePage.objects.length);
-    const obj: PageObject = {
-      id: nanoid(),
-      type: 'rect',
-      x,
-      y,
-      width: 160,
-      height: 100,
-      ...baseDefaults,
-      fill: '#cce5ff',
-      stroke: '#3380cc',
-      strokeWidth: 1,
-      cornerRadius: 4,
     };
     addObject(activePage.id, obj);
   }
@@ -284,7 +288,13 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
             const key = m.word.toLowerCase();
             if (seen.has(key)) continue;
             seen.add(key);
-            results.push({ pageIndex, pageId: page.id, objectId: obj.id, word: m.word });
+            results.push({
+              pageIndex,
+              pageId: page.id,
+              objectId: obj.id,
+              word: m.word,
+              line: lineNumberAt(obj.text, m.index),
+            });
           }
         }
       }

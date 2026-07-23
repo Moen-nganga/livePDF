@@ -11,7 +11,8 @@ async function getTypo(): Promise<Typo> {
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
-    const [affData, wordsData] = await Promise.all([
+    try {
+      const [affData, wordsData] = await Promise.all([
       fetch('/dictionaries/en_US.aff').then((r) => {
         if (!r.ok) throw new Error('Could not load spellcheck dictionary (en_US.aff)');
         return r.text();
@@ -21,8 +22,30 @@ async function getTypo(): Promise<Typo> {
         return r.text();
       }),
     ]);
-    typoInstance = new Typo('en_US', affData, wordsData);
-    return typoInstance;
+
+    // A missing static file often doesn't come back as a real 404 --
+    // Vite's dev server (and many static hosts) fall back to serving
+    // index.html for any unmatched request, which is a 200 OK full of
+    // HTML rather than dictionary data. That would otherwise get fed
+    // straight into Typo silently, producing an empty/broken dictionary
+    // that flags nothing at all. Catch that case explicitly and fail
+    // loudly instead.
+    const looksLikeHtml = (s: string) => s.trim().toLowerCase().startsWith('<!doctype') || s.trim().toLowerCase().startsWith('<html');
+    if (looksLikeHtml(affData) || looksLikeHtml(wordsData)) {
+      throw new Error(
+        'Spellcheck dictionary files are missing. Make sure en_US.aff and en_US.dic are placed at public/dictionaries/ in your project.'
+      );
+    }
+    if (!wordsData.trim() || !affData.trim()) {
+      throw new Error('Spellcheck dictionary files appear to be empty.');
+    }
+
+      typoInstance = new Typo('en_US', affData, wordsData);
+      return typoInstance;
+    } catch (err) {
+      loadingPromise = null; // let the next call retry rather than staying permanently broken
+      throw err;
+    }
   })();
 
   return loadingPromise;
