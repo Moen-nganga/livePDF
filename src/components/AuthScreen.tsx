@@ -46,13 +46,7 @@ export function AuthScreen({ onBack }: Props) {
       }}>
         {/* Logo, matches LandingScreen's header mark */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28 }}>
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-            <rect width="32" height="32" rx="8" fill="#1a73e8" />
-            <rect x="8" y="9" width="16" height="2.2" rx="1.1" fill="white" />
-            <rect x="8" y="14" width="16" height="2.2" rx="1.1" fill="white" />
-            <rect x="8" y="19" width="11" height="2.2" rx="1.1" fill="white" />
-            <rect x="8" y="24" width="7" height="2" rx="1" fill="white" fillOpacity="0.7" />
-          </svg>
+          <img src="/logo/PDF.png" alt="livePDF" style={{ height: 44, width: 'auto' }} />
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text)' }}>
             {t('app.name')}
           </div>
