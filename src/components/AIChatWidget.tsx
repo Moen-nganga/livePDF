@@ -168,7 +168,7 @@ export function AIChatWidget({ isPremium, documentContext, onRequirePremium }: P
             justifyContent: 'center',
           }}
         >
-          {isPremium ? '💬' : '⭐'}
+          {isPremium ? '✨' : '✨'}
         </button>
       </div>
 
