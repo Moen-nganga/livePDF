@@ -50,6 +50,70 @@ function blankPage(): Page {
   };
 }
 
+/**
+ * Shared helper for building simple ruled tables (header row + data rows)
+ * out of rect/text primitives. Used by the list/schedule/tracker style
+ * templates below so each one doesn't have to hand-place every cell.
+ */
+function tableGrid(opts: {
+  x: number;
+  y: number;
+  columns: { label: string; width: number; align?: 'left' | 'center' | 'right' }[];
+  rows: string[][];
+  rowHeight?: number;
+  headerHeight?: number;
+  headerFill?: string;
+  headerColor?: string;
+  fontSize?: number;
+  cellFontSize?: number;
+  rowFill?: string;
+  altRowFill?: string;
+  borderColor?: string;
+}): (TextObject | RectObject)[] {
+  const {
+    x, y, columns, rows,
+    rowHeight = 24,
+    headerHeight = 26,
+    headerFill = '#1a73e8',
+    headerColor = '#ffffff',
+    fontSize = 10,
+    cellFontSize = 10,
+    rowFill = '#ffffff',
+    altRowFill = '#f8f9fa',
+    borderColor = '#dadce0',
+  } = opts;
+
+  const objects: (TextObject | RectObject)[] = [];
+  const totalWidth = columns.reduce((sum, c) => sum + c.width, 0);
+
+  // Header row
+  objects.push(rect({ x, y, width: totalWidth, height: headerHeight, fill: headerFill, stroke: headerFill, strokeWidth: 0 }));
+  let hx = x;
+  for (const col of columns) {
+    objects.push(text({
+      x: hx + 6, y: y + headerHeight / 2 - 6, width: col.width - 12,
+      text: col.label, fontSize, bold: true, color: headerColor, align: col.align ?? 'left',
+    }));
+    hx += col.width;
+  }
+
+  // Data rows
+  rows.forEach((rowValues, i) => {
+    const ry = y + headerHeight + i * rowHeight;
+    objects.push(rect({ x, y: ry, width: totalWidth, height: rowHeight, fill: i % 2 === 0 ? rowFill : altRowFill, stroke: borderColor, strokeWidth: 1 }));
+    let cx = x;
+    columns.forEach((col, ci) => {
+      objects.push(text({
+        x: cx + 6, y: ry + rowHeight / 2 - 6, width: col.width - 12,
+        text: rowValues[ci] ?? '', fontSize: cellFontSize, align: col.align ?? 'left',
+      }));
+      cx += col.width;
+    });
+  });
+
+  return objects;
+}
+
 // ─── Templates ────────────────────────────────────────────────────────────────
 
 function resumePage(): Page {
@@ -244,6 +308,382 @@ function certificatePage(): Page {
   };
 }
 
+function toDoListPage(): Page {
+  const columns = [
+    { label: '✓', width: 32, align: 'center' as const },
+    { label: 'Task', width: 300 },
+    { label: 'Priority', width: 90, align: 'center' as const },
+    { label: 'Due Date', width: W - 80 - 32 - 300 - 90, align: 'center' as const },
+  ];
+  const rows = Array.from({ length: 11 }, () => ['☐', 'Task description', 'Medium', 'DD/MM/YYYY']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#f4511e', stroke: '#f4511e', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'To Do List', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'List Name  ·  DD Month YYYY', fontSize: 11, color: '#fde0d5' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, headerFill: '#f4511e' }),
+    ],
+  };
+}
+
+function projectTrackingPage(): Page {
+  const columns = [
+    { label: 'Project', width: 170 },
+    { label: 'Owner', width: 100 },
+    { label: 'Status', width: 90, align: 'center' as const },
+    { label: 'Priority', width: 70, align: 'center' as const },
+    { label: 'Due Date', width: W - 80 - 170 - 100 - 90 - 70, align: 'center' as const },
+  ];
+  const rows = Array.from({ length: 10 }, () => ['Project name', 'Owner name', 'In Progress', 'Medium', 'DD/MM/YYYY']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#00897b', stroke: '#00897b', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Project Tracker', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Team / Department  ·  DD Month YYYY', fontSize: 11, color: '#d3ede9' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, headerFill: '#00897b' }),
+    ],
+  };
+}
+
+function timetablePage(): Page {
+  const dayWidth = (W - 80 - 75) / 7;
+  const columns = [
+    { label: 'Time', width: 75, align: 'center' as const },
+    { label: 'Mon', width: dayWidth, align: 'center' as const },
+    { label: 'Tue', width: dayWidth, align: 'center' as const },
+    { label: 'Wed', width: dayWidth, align: 'center' as const },
+    { label: 'Thu', width: dayWidth, align: 'center' as const },
+    { label: 'Fri', width: dayWidth, align: 'center' as const },
+    { label: 'Sat', width: dayWidth, align: 'center' as const },
+    { label: 'Sun', width: dayWidth, align: 'center' as const },
+  ];
+  const times = ['8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM'];
+  const rows = times.map((t) => [t, '', '', '', '', '', '', '']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#8e24aa', stroke: '#8e24aa', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Weekly Timetable', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Name / Class  ·  Week of DD Month YYYY', fontSize: 11, color: '#ecd6f2' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, rowHeight: 26, headerFill: '#8e24aa', cellFontSize: 9, fontSize: 10 }),
+    ],
+  };
+}
+
+function shiftSchedulePage(): Page {
+  const dayWidth = (W - 80 - 140) / 7;
+  const columns = [
+    { label: 'Employee', width: 140 },
+    { label: 'Mon', width: dayWidth, align: 'center' as const },
+    { label: 'Tue', width: dayWidth, align: 'center' as const },
+    { label: 'Wed', width: dayWidth, align: 'center' as const },
+    { label: 'Thu', width: dayWidth, align: 'center' as const },
+    { label: 'Fri', width: dayWidth, align: 'center' as const },
+    { label: 'Sat', width: dayWidth, align: 'center' as const },
+    { label: 'Sun', width: dayWidth, align: 'center' as const },
+  ];
+  const rows = Array.from({ length: 8 }, () => ['Employee name', '9–5', '9–5', 'Off', '9–5', '9–5', 'Off', 'Off']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#43a047', stroke: '#43a047', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Employee Shift Schedule', fontSize: 24, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Team / Location  ·  Week of DD Month YYYY', fontSize: 11, color: '#dcf0dd' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, rowHeight: 26, headerFill: '#43a047', cellFontSize: 9 }),
+    ],
+  };
+}
+
+function attendancePage(): Page {
+  const dayWidth = (W - 80 - 160 - 70) / 5;
+  const columns = [
+    { label: 'Name', width: 160 },
+    { label: 'Mon', width: dayWidth, align: 'center' as const },
+    { label: 'Tue', width: dayWidth, align: 'center' as const },
+    { label: 'Wed', width: dayWidth, align: 'center' as const },
+    { label: 'Thu', width: dayWidth, align: 'center' as const },
+    { label: 'Fri', width: dayWidth, align: 'center' as const },
+    { label: 'Total', width: 70, align: 'center' as const },
+  ];
+  const rows = Array.from({ length: 12 }, () => ['Name', 'P', 'P', 'P', 'P', 'P', '5/5']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#d81b60', stroke: '#d81b60', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Attendance Sheet', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Class / Team  ·  Week of DD Month YYYY', fontSize: 11, color: '#fad0e0' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, headerFill: '#d81b60' }),
+      text({ x: 40, y: H - 60, width: W - 80, text: 'P = Present   A = Absent   L = Late', fontSize: 10, color: '#5f6368' }),
+    ],
+  };
+}
+
+function gradeBookPage(): Page {
+  const columns = [
+    { label: 'Student', width: 140 },
+    { label: 'Assignment 1', width: 90, align: 'center' as const },
+    { label: 'Assignment 2', width: 90, align: 'center' as const },
+    { label: 'Assignment 3', width: 90, align: 'center' as const },
+    { label: 'Assignment 4', width: 90, align: 'center' as const },
+    { label: 'Final Grade', width: W - 80 - 140 - 90 * 4, align: 'center' as const },
+  ];
+  const rows = Array.from({ length: 10 }, () => ['Student name', '—', '—', '—', '—', '—']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#fb8c00', stroke: '#fb8c00', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Grade Book', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Class / Subject  ·  Term / Semester', fontSize: 11, color: '#fde3c2' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, cellFontSize: 9, fontSize: 9, headerFill: '#fb8c00' }),
+    ],
+  };
+}
+
+function expenseReportPage(): Page {
+  const columns = [
+    { label: 'Date', width: 80, align: 'center' as const },
+    { label: 'Category', width: 110 },
+    { label: 'Description', width: 200 },
+    { label: 'Amount', width: W - 80 - 80 - 110 - 200, align: 'right' as const },
+  ];
+  const rows = Array.from({ length: 9 }, () => ['DD/MM/YYYY', 'Category', 'Expense description', '$0.00']);
+  const tableEndY = 140 + 26 + rows.length * 24;
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      text({ x: 40, y: 40, width: 300, text: 'Expense Report', fontSize: 28, bold: true, color: '#3949ab' }),
+      text({ x: 40, y: 80, width: 300, text: 'Employee Name\nDepartment  ·  DD Month YYYY', fontSize: 11, color: '#5f6368', height: 36 }),
+      text({ x: W - 200, y: 40, width: 160, text: 'Report #0001', fontSize: 13, bold: true, align: 'right' }),
+      text({ x: W - 200, y: 60, width: 160, text: 'Period: MM/YYYY', fontSize: 11, color: '#5f6368', align: 'right' }),
+      ...tableGrid({ x: 40, y: 140, columns, rows, headerFill: '#3949ab' }),
+      rect({ x: W - 200, y: tableEndY + 12, width: 160, height: 28, fill: '#3949ab', stroke: '#3949ab', strokeWidth: 0 }),
+      text({ x: W - 192, y: tableEndY + 20, width: 60, text: 'TOTAL', fontSize: 11, bold: true, color: '#ffffff' }),
+      text({ x: W - 132, y: tableEndY + 20, width: 92, text: '$0.00', fontSize: 13, bold: true, color: '#ffffff', align: 'right' }),
+      text({ x: 40, y: tableEndY + 50, width: 150, text: 'APPROVED BY', fontSize: 10, bold: true, color: '#3949ab' }),
+      text({ x: 40, y: tableEndY + 68, width: W - 80, text: 'Signature: ______________________        Date: __________', fontSize: 11, color: '#5f6368' }),
+    ],
+  };
+}
+
+function purchaseOrderPage(): Page {
+  const columns = [
+    { label: 'Item', width: 240 },
+    { label: 'Qty', width: 60, align: 'center' as const },
+    { label: 'Unit Cost', width: 90, align: 'right' as const },
+    { label: 'Total', width: W - 80 - 240 - 60 - 90, align: 'right' as const },
+  ];
+  const rows = [
+    ['Item description', '1', '$0.00', '$0.00'],
+    ['Item description', '1', '$0.00', '$0.00'],
+    ['Item description', '1', '$0.00', '$0.00'],
+  ];
+  const tableEndY = 250 + 26 + rows.length * 24;
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      text({ x: 40, y: 40, width: 250, text: 'PURCHASE ORDER', fontSize: 24, bold: true, color: '#6d4c41' }),
+      text({ x: 40, y: 78, width: 300, text: 'Your Business Name\nyour@email.com  ·  +1 (555) 000-0000\n123 Street, City, Country', fontSize: 11, color: '#5f6368', height: 52 }),
+      text({ x: W - 200, y: 40, width: 160, text: 'PO #0001', fontSize: 14, bold: true, align: 'right' }),
+      text({ x: W - 200, y: 62, width: 160, text: 'Date: DD/MM/YYYY', fontSize: 11, color: '#5f6368', align: 'right' }),
+      text({ x: W - 200, y: 80, width: 160, text: 'Needed by: DD/MM/YYYY', fontSize: 11, color: '#5f6368', align: 'right' }),
+      text({ x: 40, y: 155, width: 150, text: 'VENDOR', fontSize: 10, bold: true, color: '#6d4c41' }),
+      text({ x: 40, y: 172, width: 250, text: 'Vendor Name\nvendor@email.com\n456 Avenue, City, Country', fontSize: 11, height: 50 }),
+      text({ x: 320, y: 155, width: 150, text: 'SHIP TO', fontSize: 10, bold: true, color: '#6d4c41' }),
+      text({ x: 320, y: 172, width: 235, text: 'Your Business Name\n123 Street, City, Country', fontSize: 11, height: 36 }),
+      ...tableGrid({ x: 40, y: 250, columns, rows, headerFill: '#6d4c41' }),
+      rect({ x: 380, y: tableEndY + 12, width: W - 80 - 340, height: 28, fill: '#6d4c41', stroke: '#6d4c41', strokeWidth: 0 }),
+      text({ x: 388, y: tableEndY + 20, width: 60, text: 'TOTAL', fontSize: 11, bold: true, color: '#ffffff' }),
+      text({ x: 448, y: tableEndY + 20, width: 100, text: '$0.00', fontSize: 13, bold: true, color: '#ffffff', align: 'right' }),
+      text({ x: 40, y: tableEndY + 52, width: 150, text: 'TERMS', fontSize: 10, bold: true, color: '#6d4c41' }),
+      text({ x: 40, y: tableEndY + 70, width: W - 80, text: 'Please deliver by the date above and reference this PO number on your invoice.', fontSize: 11, color: '#5f6368' }),
+      text({ x: 40, y: tableEndY + 112, width: 300, text: 'Authorized by: ______________________', fontSize: 11, color: '#202124' }),
+    ],
+  };
+}
+
+function annualBudgetPage(): Page {
+  const columns = [
+    { label: 'Category', width: 155 },
+    { label: 'Q1', width: 80, align: 'right' as const },
+    { label: 'Q2', width: 80, align: 'right' as const },
+    { label: 'Q3', width: 80, align: 'right' as const },
+    { label: 'Q4', width: 80, align: 'right' as const },
+    { label: 'Total', width: W - 80 - 155 - 80 * 4, align: 'right' as const },
+  ];
+  const rows = [
+    ['Revenue', '$0', '$0', '$0', '$0', '$0'],
+    ['Salaries', '$0', '$0', '$0', '$0', '$0'],
+    ['Marketing', '$0', '$0', '$0', '$0', '$0'],
+    ['Operations', '$0', '$0', '$0', '$0', '$0'],
+    ['Software & Tools', '$0', '$0', '$0', '$0', '$0'],
+    ['Travel', '$0', '$0', '$0', '$0', '$0'],
+    ['Other', '$0', '$0', '$0', '$0', '$0'],
+  ];
+  const tableEndY = 130 + 26 + rows.length * 24;
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#f9a825', stroke: '#f9a825', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Annual Budget', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Department / Company  ·  Fiscal Year YYYY', fontSize: 11, color: '#fdecc0' }),
+      ...tableGrid({ x: 40, y: 130, columns, rows, headerFill: '#f9a825', headerColor: '#202124' }),
+      rect({ x: 40, y: tableEndY + 10, width: W - 80, height: 28, fill: '#202124', stroke: '#202124', strokeWidth: 0 }),
+      text({ x: 48, y: tableEndY + 18, width: 155, text: 'NET TOTAL', fontSize: 11, bold: true, color: '#ffffff' }),
+      text({ x: W - 200, y: tableEndY + 18, width: 152, text: '$0', fontSize: 13, bold: true, color: '#ffffff', align: 'right' }),
+    ],
+  };
+}
+
+function teamRosterPage(): Page {
+  const columns = [
+    { label: 'Name', width: 140 },
+    { label: 'Role', width: 120 },
+    { label: 'Email', width: 160 },
+    { label: 'Phone', width: W - 80 - 140 - 120 - 160 },
+  ];
+  const rows = Array.from({ length: 10 }, () => ['Full name', 'Role / Title', 'name@email.com', '+1 (555) 000-0000']);
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#1e88e5', stroke: '#1e88e5', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Team Roster', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Team / Department  ·  Updated DD Month YYYY', fontSize: 11, color: '#d3e6fb' }),
+      ...tableGrid({ x: 40, y: 120, columns, rows, headerFill: '#1e88e5' }),
+    ],
+  };
+}
+
+function timeShiftsPage(): Page {
+  const columns = [
+    { label: 'Day', width: 90 },
+    { label: 'Clock In', width: 100, align: 'center' as const },
+    { label: 'Clock Out', width: 100, align: 'center' as const },
+    { label: 'Break', width: 75, align: 'center' as const },
+    { label: 'Total Hours', width: W - 80 - 90 - 100 - 100 - 75, align: 'center' as const },
+  ];
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const rows = days.map((d) => [d, '9:00 AM', '5:00 PM', '30 min', '7.5']);
+  const tableEndY = 140 + 26 + rows.length * 24;
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      text({ x: 40, y: 40, width: 300, text: 'Time Sheet', fontSize: 28, bold: true, color: '#5e35b1' }),
+      text({ x: 40, y: 80, width: 300, text: 'Employee Name  ·  Week of DD Month YYYY', fontSize: 11, color: '#5f6368' }),
+      ...tableGrid({ x: 40, y: 140, columns, rows, headerFill: '#5e35b1' }),
+      rect({ x: W - 200, y: tableEndY + 12, width: 160, height: 28, fill: '#5e35b1', stroke: '#5e35b1', strokeWidth: 0 }),
+      text({ x: W - 192, y: tableEndY + 20, width: 80, text: 'TOTAL', fontSize: 11, bold: true, color: '#ffffff' }),
+      text({ x: W - 132, y: tableEndY + 20, width: 92, text: '37.5 hrs', fontSize: 12, bold: true, color: '#ffffff', align: 'right' }),
+      text({ x: 40, y: tableEndY + 60, width: 300, text: 'Employee signature: ______________________', fontSize: 11, color: '#202124' }),
+      text({ x: 40, y: tableEndY + 84, width: 300, text: 'Manager signature: ______________________', fontSize: 11, color: '#202124' }),
+    ],
+  };
+}
+
+function analyticsDashboardPage(): Page {
+  const cardWidth = (W - 80 - 3 * 14) / 4;
+  const cardData = [
+    { label: 'Total Revenue', value: '$0' },
+    { label: 'Active Users', value: '0' },
+    { label: 'Conversion Rate', value: '0%' },
+    { label: 'Avg. Order Value', value: '$0' },
+  ];
+  const cards = cardData.flatMap((c, i) => {
+    const cx = 40 + i * (cardWidth + 14);
+    return [
+      rect({ x: cx, y: 120, width: cardWidth, height: 78, fill: '#ffffff', stroke: '#dadce0', strokeWidth: 1, cornerRadius: 8 }),
+      rect({ x: cx, y: 120, width: 4, height: 78, fill: '#0097a7', stroke: '#0097a7', strokeWidth: 0, cornerRadius: 2 }),
+      text({ x: cx + 14, y: 132, width: cardWidth - 24, text: c.value, fontSize: 20, bold: true, color: '#202124' }),
+      text({ x: cx + 14, y: 160, width: cardWidth - 24, text: c.label, fontSize: 10, color: '#5f6368' }),
+    ];
+  });
+
+  const barValues1 = [40, 70, 55, 90, 65, 100, 75];
+  const barLabels1 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'];
+  const chart1Y = 240;
+  const chart1H = 200;
+  const chart1X = 40;
+  const chart1W = (W - 80 - 20) / 2;
+  const barW1 = (chart1W - 40) / barValues1.length - 8;
+  const bars1 = barValues1.flatMap((v, i) => {
+    const bh = (v / 100) * (chart1H - 60);
+    const bx = chart1X + 20 + i * (barW1 + 8);
+    const by = chart1Y + chart1H - 40 - bh;
+    return [
+      rect({ x: bx, y: by, width: barW1, height: bh, fill: '#0097a7', stroke: '#0097a7', strokeWidth: 0, cornerRadius: 2 }),
+      text({ x: bx - 4, y: chart1Y + chart1H - 32, width: barW1 + 8, text: barLabels1[i], fontSize: 8, color: '#5f6368', align: 'center' }),
+    ];
+  });
+
+  const barValues2 = [80, 45, 30, 60];
+  const barLabels2 = ['Organic', 'Paid', 'Social', 'Referral'];
+  const chart2X = chart1X + chart1W + 20;
+  const chart2W = chart1W;
+  const barW2 = (chart2W - 40) / barValues2.length - 12;
+  const bars2 = barValues2.flatMap((v, i) => {
+    const bh = (v / 100) * (chart1H - 60);
+    const bx = chart2X + 20 + i * (barW2 + 12);
+    const by = chart1Y + chart1H - 40 - bh;
+    return [
+      rect({ x: bx, y: by, width: barW2, height: bh, fill: '#3949ab', stroke: '#3949ab', strokeWidth: 0, cornerRadius: 2 }),
+      text({ x: bx - 6, y: chart1Y + chart1H - 32, width: barW2 + 12, text: barLabels2[i], fontSize: 8, color: '#5f6368', align: 'center' }),
+    ];
+  });
+
+  return {
+    id: nanoid(),
+    width: W,
+    height: H,
+    backgroundImage: null,
+    objects: [
+      rect({ x: 0, y: 0, width: W, height: 90, fill: '#0097a7', stroke: '#0097a7', strokeWidth: 0 }),
+      text({ x: 40, y: 22, width: 400, text: 'Analytics Dashboard', fontSize: 26, bold: true, color: '#ffffff' }),
+      text({ x: 40, y: 58, width: 400, text: 'Project / Product  ·  DD Month YYYY', fontSize: 11, color: '#cdeef0' }),
+      ...cards,
+      rect({ x: chart1X, y: chart1Y, width: chart1W, height: chart1H, fill: '#f8f9fa', stroke: '#dadce0', strokeWidth: 1, cornerRadius: 8 }),
+      text({ x: chart1X + 14, y: chart1Y + 12, width: chart1W - 28, text: 'Monthly Revenue', fontSize: 11, bold: true, color: '#202124' }),
+      ...bars1,
+      rect({ x: chart2X, y: chart1Y, width: chart2W, height: chart1H, fill: '#f8f9fa', stroke: '#dadce0', strokeWidth: 1, cornerRadius: 8 }),
+      text({ x: chart2X + 14, y: chart1Y + 12, width: chart2W - 28, text: 'Traffic by Channel', fontSize: 11, bold: true, color: '#202124' }),
+      ...bars2,
+    ],
+  };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface TemplateDefinition {
@@ -311,5 +751,101 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#fef7e0',
     icon: '🏆',
     buildPages: () => [certificatePage()],
+  },
+  {
+    id: 'todo',
+    label: 'To do list',
+    description: 'Track tasks and priorities',
+    color: '#fbe4da',
+    icon: '✅',
+    buildPages: () => [toDoListPage()],
+  },
+  {
+    id: 'project-tracking',
+    label: 'Project tracking',
+    description: 'Status board for projects',
+    color: '#daece9',
+    icon: '📁',
+    buildPages: () => [projectTrackingPage()],
+  },
+  {
+    id: 'timetable',
+    label: 'Timetable',
+    description: 'Weekly schedule grid',
+    color: '#ede0f0',
+    icon: '🗓️',
+    buildPages: () => [timetablePage()],
+  },
+  {
+    id: 'shift-schedule',
+    label: 'Employee shift schedule',
+    description: 'Weekly shifts by employee',
+    color: '#dcefdd',
+    icon: '🕒',
+    buildPages: () => [shiftSchedulePage()],
+  },
+  {
+    id: 'attendance',
+    label: 'Attendance',
+    description: 'Track daily attendance',
+    color: '#f9dbe6',
+    icon: '📝',
+    buildPages: () => [attendancePage()],
+  },
+  {
+    id: 'gradebook',
+    label: 'Grade book',
+    description: 'Student grades by assignment',
+    color: '#fde3c2',
+    icon: '🎓',
+    buildPages: () => [gradeBookPage()],
+  },
+  {
+    id: 'expense-report',
+    label: 'Expense Report',
+    description: 'Itemised expenses and totals',
+    color: '#dee1f2',
+    icon: '💰',
+    buildPages: () => [expenseReportPage()],
+  },
+  {
+    id: 'purchase-order',
+    label: 'Purchase Order',
+    description: 'Vendor purchase order',
+    color: '#e5ddda',
+    icon: '📦',
+    buildPages: () => [purchaseOrderPage()],
+  },
+  {
+    id: 'annual-budget',
+    label: 'Annual Budget',
+    description: 'Quarterly budget by category',
+    color: '#fdecc0',
+    icon: '💵',
+    buildPages: () => [annualBudgetPage()],
+  },
+  {
+    id: 'team-roster',
+    label: 'Team Roster',
+    description: 'Contact list for your team',
+    color: '#d3e6fb',
+    icon: '👥',
+    buildPages: () => [teamRosterPage()],
+  },
+  {
+    id: 'time-shifts',
+    label: 'Time shifts',
+    description: 'Weekly clock in/out sheet',
+    color: '#e3ddf3',
+    icon: '⏱️',
+    buildPages: () => [timeShiftsPage()],
+  },
+  {
+    id: 'analytics-dashboard',
+    label: 'Analytics dashboard',
+    description: 'KPI cards and charts',
+    color: '#dcedee',
+    icon: '📈',
+    buildPages: () => [analyticsDashboardPage()],
   },
 ];

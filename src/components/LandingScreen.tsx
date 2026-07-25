@@ -436,13 +436,25 @@ function TemplateCard({
 
 function TemplateThumbnail({ id }: { id: string }) {
   switch (id) {
-    case 'blank':       return <BlankThumbnail />;
-    case 'resume':      return <ResumeThumbnail />;
-    case 'invoice':     return <InvoiceThumbnail />;
-    case 'letter':      return <LetterThumbnail />;
-    case 'meeting':     return <MeetingThumbnail />;
-    case 'report':      return <ReportThumbnail />;
-    case 'certificate': return <CertificateThumbnail />;
+    case 'blank':                return <BlankThumbnail />;
+    case 'resume':                return <ResumeThumbnail />;
+    case 'invoice':                return <InvoiceThumbnail />;
+    case 'letter':                return <LetterThumbnail />;
+    case 'meeting':                return <MeetingThumbnail />;
+    case 'report':                return <ReportThumbnail />;
+    case 'certificate':                return <CertificateThumbnail />;
+    case 'todo':                return <ToDoThumbnail />;
+    case 'project-tracking':                return <ProjectTrackingThumbnail />;
+    case 'timetable':                return <TimetableThumbnail />;
+    case 'shift-schedule':                return <ShiftScheduleThumbnail />;
+    case 'attendance':                return <AttendanceThumbnail />;
+    case 'gradebook':                return <GradeBookThumbnail />;
+    case 'expense-report':                return <ExpenseReportThumbnail />;
+    case 'purchase-order':                return <PurchaseOrderThumbnail />;
+    case 'annual-budget':                return <AnnualBudgetThumbnail />;
+    case 'team-roster':                return <TeamRosterThumbnail />;
+    case 'time-shifts':                return <TimeShiftsThumbnail />;
+    case 'analytics-dashboard':                return <AnalyticsDashboardThumbnail />;
     default:            return <BlankThumbnail />;
   }
 }
@@ -637,6 +649,219 @@ function CertificateThumbnail() {
       {/* signature lines */}
       <rect x="13" y="82" width="22" height="1" rx="0.5" fill="#c8a84b" fillOpacity="0.5"/>
       <rect x="45" y="82" width="22" height="1" rx="0.5" fill="#c8a84b" fillOpacity="0.5"/>
+    </Paper>
+  );
+}
+
+function ToDoThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="20" rx="3" fill="#f4511e"/>
+      <rect x="10" y="7" width="40" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3,4].map(i => (
+        <g key={i}>
+          <rect x="10" y={28 + i*13} width="6" height="6" rx="1" stroke="#dadce0" strokeWidth="1" fill="white"/>
+          {i < 2 && <path d={`M11.5 ${31+i*13} l1.5 1.5 l2.5 -2.5`} stroke="#f4511e" strokeWidth="1.5" fill="none"/>}
+          <rect x="20" y={30 + i*13} width="46" height="2" rx="1" fill="#e0e0e0"/>
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function ProjectTrackingThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="18" rx="3" fill="#00897b"/>
+      <rect x="10" y="6" width="36" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      <rect x="8" y="24" width="64" height="6" rx="1" fill="#e0f2f1"/>
+      {[0,1,2,3].map(i => (
+        <g key={i}>
+          <rect x="8" y={32 + i*11} width="64" height="9" rx="0.5" fill={i % 2 === 0 ? '#f8f9fa' : 'white'}/>
+          <rect x="10" y={35.5 + i*11} width="24" height="2" rx="1" fill="#dadce0"/>
+          <rect x="56" y={35.5 + i*11} width="14" height="2" rx="1" fill="#00897b" fillOpacity="0.5"/>
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function TimetableThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#8e24aa"/>
+      <rect x="10" y="5.5" width="34" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3,4].map(row => (
+        <g key={row}>
+          {[0,1,2,3,4,5].map(col => (
+            <rect key={col} x={8 + col*11} y={22 + row*13} width="10" height="11" fill={row===0 ? '#f3e5f5' : 'white'} stroke="#e0e0e0" strokeWidth="0.5"/>
+          ))}
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function ShiftScheduleThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#43a047"/>
+      <rect x="10" y="5.5" width="42" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3].map(row => (
+        <g key={row}>
+          <rect x="8" y={22 + row*15} width="20" height="12" fill="#e8f5e9" stroke="#dadce0" strokeWidth="0.5"/>
+          {[0,1,2,3].map(col => (
+            <rect key={col} x={30 + col*11} y={22 + row*15} width="10" height="12" fill="white" stroke="#e0e0e0" strokeWidth="0.5"/>
+          ))}
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function AttendanceThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#d81b60"/>
+      <rect x="10" y="5.5" width="38" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3,4].map(row => (
+        <g key={row}>
+          <rect x="8" y={22+row*13} width="26" height="10" fill="white" stroke="#f5d0e0" strokeWidth="0.5"/>
+          {[0,1,2,3].map(col => (
+            <circle key={col} cx={40+col*10} cy={27+row*13} r="3" fill={col<3 ? '#fce4ec' : 'white'} stroke="#d81b60" strokeWidth="0.6"/>
+          ))}
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function GradeBookThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#fb8c00"/>
+      <rect x="10" y="5.5" width="34" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3,4].map(row => (
+        <g key={row}>
+          <rect x="8" y={22+row*13} width="22" height="11" fill="white" stroke="#f7d9ad" strokeWidth="0.5"/>
+          {[0,1,2].map(col => (
+            <rect key={col} x={32+col*15} y={22+row*13} width="14" height="11" fill={row===0?'#fff3e0':'white'} stroke="#f0e0c8" strokeWidth="0.5"/>
+          ))}
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function ExpenseReportThumbnail() {
+  return (
+    <Paper>
+      <rect x="8" y="8" width="30" height="4" rx="2" fill="#3949ab"/>
+      <rect x="8" y="18" width="64" height="1" fill="#e0e0e0"/>
+      <rect x="8" y="26" width="64" height="6" rx="1" fill="#e8eaf6"/>
+      {[0,1,2].map(i => (
+        <g key={i}>
+          <rect x="8" y={34+i*8} width="64" height="6" rx="0.5" fill={i%2===0?'white':'#f8f9fa'}/>
+          <rect x="10" y={36+i*8} width="24" height="1.5" rx="0.75" fill="#dadce0"/>
+          <rect x="58" y={36+i*8} width="12" height="1.5" rx="0.75" fill="#dadce0"/>
+        </g>
+      ))}
+      <rect x="44" y="66" width="28" height="6" rx="1" fill="#3949ab"/>
+      <rect x="46" y="68" width="20" height="1.5" rx="0.75" fill="white" fillOpacity="0.8"/>
+    </Paper>
+  );
+}
+
+function PurchaseOrderThumbnail() {
+  return (
+    <Paper>
+      <rect x="8" y="8" width="34" height="4" rx="2" fill="#6d4c41"/>
+      <rect x="56" y="8" width="16" height="8" rx="2" fill="#efebe9"/>
+      <rect x="8" y="18" width="64" height="1" fill="#e0e0e0"/>
+      <rect x="8" y="36" width="64" height="6" rx="1" fill="#efebe9"/>
+      {[0,1,2].map(i => (
+        <g key={i}>
+          <rect x="8" y={44+i*7} width="64" height="5" rx="0.5" fill={i%2===0?'#f8f9fa':'white'}/>
+          <rect x="10" y={46+i*7} width="28" height="1.5" rx="0.75" fill="#dadce0"/>
+          <rect x="60" y={46+i*7} width="10" height="1.5" rx="0.75" fill="#dadce0"/>
+        </g>
+      ))}
+      <rect x="44" y="67" width="28" height="5" rx="1" fill="#6d4c41"/>
+    </Paper>
+  );
+}
+
+function AnnualBudgetThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#f9a825"/>
+      <rect x="10" y="5.5" width="36" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3].map(row => (
+        <g key={row}>
+          <rect x="8" y={22+row*11} width="26" height="9" fill="white" stroke="#fbe6b0" strokeWidth="0.5"/>
+          {[0,1,2].map(col => (
+            <rect key={col} x={34+col*13} y={22+row*11} width="12" height="9" fill={row===0?'#fef7e0':'white'} stroke="#f0e2b0" strokeWidth="0.5"/>
+          ))}
+        </g>
+      ))}
+      <rect x="8" y="68" width="64" height="6" rx="1" fill="#202124"/>
+    </Paper>
+  );
+}
+
+function TeamRosterThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#1e88e5"/>
+      <rect x="10" y="5.5" width="34" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3].map(i => (
+        <g key={i}>
+          <circle cx="14" cy={28+i*15} r="5" fill="#e3f2fd" stroke="#1e88e5" strokeWidth="0.8"/>
+          <rect x="24" y={24+i*15} width="40" height="2" rx="1" fill="#dadce0"/>
+          <rect x="24" y={28+i*15} width="30" height="1.5" rx="0.75" fill="#e8e8e8"/>
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function TimeShiftsThumbnail() {
+  return (
+    <Paper>
+      <rect x="8" y="8" width="34" height="4" rx="2" fill="#5e35b1"/>
+      <circle cx="64" cy="14" r="8" fill="#ede7f6" stroke="#5e35b1" strokeWidth="1"/>
+      <path d="M64 9 L64 14 L68 16" stroke="#5e35b1" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+      <rect x="8" y="26" width="64" height="6" rx="1" fill="#ede7f6"/>
+      {[0,1,2,3].map(i => (
+        <g key={i}>
+          <rect x="8" y={34+i*9} width="64" height="7" rx="0.5" fill={i%2===0?'white':'#f8f9fa'}/>
+          <rect x="10" y={36.5+i*9} width="20" height="1.5" rx="0.75" fill="#dadce0"/>
+          <rect x="50" y={36.5+i*9} width="20" height="1.5" rx="0.75" fill="#dadce0"/>
+        </g>
+      ))}
+    </Paper>
+  );
+}
+
+function AnalyticsDashboardThumbnail() {
+  return (
+    <Paper>
+      <rect width="80" height="16" rx="3" fill="#0097a7"/>
+      <rect x="10" y="5.5" width="42" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
+      {[0,1,2,3].map(i => (
+        <rect key={i} x={8+i*17} y="22" width="14" height="12" rx="1.5" fill="#e0f7fa" stroke="#0097a7" strokeWidth="0.5"/>
+      ))}
+      {/* bar chart */}
+      <rect x="8" y="42" width="30" height="34" rx="1" fill="#f8f9fa" stroke="#dadce0" strokeWidth="0.5"/>
+      <rect x="12" y="64" width="4" height="10" fill="#0097a7"/>
+      <rect x="18" y="58" width="4" height="16" fill="#0097a7"/>
+      <rect x="24" y="50" width="4" height="24" fill="#0097a7"/>
+      <rect x="30" y="60" width="4" height="14" fill="#0097a7"/>
+      {/* second bar chart */}
+      <rect x="42" y="42" width="30" height="34" rx="1" fill="#f8f9fa" stroke="#dadce0" strokeWidth="0.5"/>
+      <rect x="46" y="52" width="5" height="22" fill="#3949ab"/>
+      <rect x="53" y="60" width="5" height="14" fill="#3949ab"/>
+      <rect x="60" y="66" width="5" height="8" fill="#3949ab"/>
     </Paper>
   );
 }
