@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from '../store/editorStore';
+import { useSubscriptionStore } from '../store/subscriptionStore';
 import type { Page } from '../types/document';
+import { PremiumRequiredDialog } from './PremiumRequiredDialog';
+
+const FREE_PAGE_LIMIT = 20;
 
 interface MenuState {
   pageId: string;
@@ -8,7 +12,12 @@ interface MenuState {
   y: number;
 }
 
-export function PageNav() {
+interface PageNavProps {
+  /** Called when a free-tier user hits the page limit and clicks "Upgrade" in the resulting prompt. */
+  onRequirePremium?: () => void;
+}
+
+export function PageNav({ onRequirePremium }: PageNavProps) {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
   const setActivePageIndex = useEditorStore((s) => s.setActivePageIndex);
@@ -17,9 +26,20 @@ export function PageNav() {
   const duplicatePage = useEditorStore((s) => s.duplicatePage);
   const renamePage = useEditorStore((s) => s.renamePage);
 
+  const subscription = useSubscriptionStore((s) => s.subscription);
+  // Client-side gate only, same caveat as Toolbar's signature gating and
+  // App.tsx's AI chat gating -- there's no server resource being consumed
+  // by adding a page in this check itself (unlike the weekly
+  // document-creation limit, which is enforced server-side too). Worth
+  // revisiting with a server-side check if this ever needs to be airtight.
+  const isPremium =
+    subscription?.status === 'active' &&
+    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
+
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [premiumPromptOpen, setPremiumPromptOpen] = useState(false);
 
   // Close the context menu on any click elsewhere, or on Escape
   useEffect(() => {
@@ -35,6 +55,9 @@ export function PageNav() {
   }, [menu]);
 
   if (!document) return null;
+
+  const pageCount = document.pages.length;
+  const atPageLimit = !isPremium && pageCount >= FREE_PAGE_LIMIT;
 
   function labelFor(page: Page, index: number): string {
     return page.name || `Page ${index + 1}`;
@@ -61,6 +84,24 @@ export function PageNav() {
       return;
     }
     removePage(pageId);
+    setMenu(null);
+  }
+
+  function handleAddPage() {
+    if (atPageLimit) {
+      setPremiumPromptOpen(true);
+      return;
+    }
+    addBlankPage('A4');
+  }
+
+  function handleDuplicate(pageId: string) {
+    if (atPageLimit) {
+      setMenu(null);
+      setPremiumPromptOpen(true);
+      return;
+    }
+    duplicatePage(pageId);
     setMenu(null);
   }
 
@@ -122,24 +163,36 @@ export function PageNav() {
         </div>
       ))}
 
-      <button onClick={() => addBlankPage('A4')} style={{ fontSize: 12 }}>
-        + Add page
+      <button
+        onClick={handleAddPage}
+        title={atPageLimit ? `Free plan limit: ${FREE_PAGE_LIMIT} pages — upgrade for unlimited pages` : undefined}
+        style={{ fontSize: 12 }}
+      >
+        {atPageLimit ? `⭐ Add page (${pageCount}/${FREE_PAGE_LIMIT})` : '+ Add page'}
       </button>
 
       {menu && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          onDuplicate={() => {
-            duplicatePage(menu.pageId);
-            setMenu(null);
-          }}
+          onDuplicate={() => handleDuplicate(menu.pageId)}
           onRename={() => {
             const index = document.pages.findIndex((p) => p.id === menu.pageId);
             const page = document.pages[index];
             if (page) startRename(page, index);
           }}
           onDelete={() => handleDelete(menu.pageId)}
+        />
+      )}
+
+      {premiumPromptOpen && (
+        <PremiumRequiredDialog
+          featureName={`Pages beyond ${FREE_PAGE_LIMIT}`}
+          onClose={() => setPremiumPromptOpen(false)}
+          onUpgrade={() => {
+            setPremiumPromptOpen(false);
+            onRequirePremium?.();
+          }}
         />
       )}
     </aside>

@@ -311,7 +311,7 @@ export default function App() {
         {!isReadOnly && <Toolbar onRequirePremium={requestUpgrade} />}
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          {isOwner && <PageNav />}
+          {isOwner && <PageNav onRequirePremium={requestUpgrade} />}
           <main
             className="app-canvas-area"
             style={{
