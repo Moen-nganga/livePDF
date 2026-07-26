@@ -693,6 +693,8 @@ export interface TemplateDefinition {
   color: string; // accent color for the thumbnail preview
   icon: string;  // emoji used in the thumbnail
   buildPages: () => Page[];
+  /** True for templates that require an active Premium subscription to use. */
+  premium?: boolean;
 }
 
 export const TEMPLATES: TemplateDefinition[] = [
@@ -759,6 +761,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#fbe4da',
     icon: '✅',
     buildPages: () => [toDoListPage()],
+    premium: true,
   },
   {
     id: 'project-tracking',
@@ -767,6 +770,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#daece9',
     icon: '📁',
     buildPages: () => [projectTrackingPage()],
+    premium: true,
   },
   {
     id: 'timetable',
@@ -775,6 +779,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#ede0f0',
     icon: '🗓️',
     buildPages: () => [timetablePage()],
+    premium: true,
   },
   {
     id: 'shift-schedule',
@@ -783,6 +788,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#dcefdd',
     icon: '🕒',
     buildPages: () => [shiftSchedulePage()],
+    premium: true,
   },
   {
     id: 'attendance',
@@ -791,6 +797,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#f9dbe6',
     icon: '📝',
     buildPages: () => [attendancePage()],
+    premium: true,
   },
   {
     id: 'gradebook',
@@ -799,6 +806,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#fde3c2',
     icon: '🎓',
     buildPages: () => [gradeBookPage()],
+    premium: true,
   },
   {
     id: 'expense-report',
@@ -807,6 +815,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#dee1f2',
     icon: '💰',
     buildPages: () => [expenseReportPage()],
+    premium: true,
   },
   {
     id: 'purchase-order',
@@ -815,6 +824,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#e5ddda',
     icon: '📦',
     buildPages: () => [purchaseOrderPage()],
+    premium: true,
   },
   {
     id: 'annual-budget',
@@ -823,6 +833,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#fdecc0',
     icon: '💵',
     buildPages: () => [annualBudgetPage()],
+    premium: true,
   },
   {
     id: 'team-roster',
@@ -831,6 +842,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#d3e6fb',
     icon: '👥',
     buildPages: () => [teamRosterPage()],
+    premium: true,
   },
   {
     id: 'time-shifts',
@@ -839,6 +851,7 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#e3ddf3',
     icon: '⏱️',
     buildPages: () => [timeShiftsPage()],
+    premium: true,
   },
   {
     id: 'analytics-dashboard',
@@ -847,5 +860,6 @@ export const TEMPLATES: TemplateDefinition[] = [
     color: '#dcedee',
     icon: '📈',
     buildPages: () => [analyticsDashboardPage()],
+    premium: true,
   },
 ];

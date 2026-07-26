@@ -154,21 +154,27 @@ export function AIChatWidget({ isPremium, documentContext, onRequirePremium }: P
           onClick={handleToggle}
           title={isPremium ? 'Ask the assistant' : 'Ask the assistant (Premium)'}
           style={{
-            width: 52,
-            height: 52,
-            borderRadius: '50%',
+            height: 48,
+            padding: '0 20px 0 16px',
+            borderRadius: 24,
             border: 'none',
             background: 'var(--color-accent, #1a73e8)',
             color: 'white',
-            fontSize: 22,
+            fontSize: 14,
+            fontWeight: 600,
+            fontFamily: 'inherit',
             cursor: 'pointer',
             boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
+            gap: 8,
           }}
         >
-          {isPremium ? '✨' : '✨'}
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1L14 6.2L8 15L2 6.2L8 1Z" fill="white" fillOpacity="0.95" />
+            <path d="M8 1L14 6.2H2L8 1Z" fill="white" fillOpacity="0.35" />
+          </svg>
+          AI Assistant
         </button>
       </div>
 

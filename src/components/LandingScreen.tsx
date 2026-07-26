@@ -10,6 +10,7 @@ import { AuthScreen } from './AuthScreen';
 import { AccountMenu } from './AccountMenu';
 import { UpgradeScreen } from './UpgradeScreen';
 import { LimitReachedDialog } from './LimitReachedDialog';
+import { PremiumRequiredDialog } from './PremiumRequiredDialog';
 
 interface Props {
   onEnter: () => void;
@@ -24,11 +25,28 @@ export function LandingScreen({ onEnter }: Props) {
   const authUser = useAuthStore((s) => s.user);
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
+  const subscription = useSubscriptionStore((s) => s.subscription);
   const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
   const t = useI18nStore((s) => s.t);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
+  const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
+  const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
+
+  // Same client-side-only caveat as elsewhere (Toolbar, AIChatWidget) --
+  // this only decides what the landing screen shows/allows. The real
+  // enforcement has to live wherever documents actually get saved.
+  const isPremium =
+    subscription?.status === 'active' &&
+    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
+
+  // Non-premium visitors see the free templates up front and the premium
+  // ones tucked behind a "More templates" toggle (still locked, so they can
+  // browse what's available before deciding to upgrade). Premium users just
+  // get everything in one grid -- there's nothing to hide from them.
+  const freeTemplates = TEMPLATES.filter((tpl) => !tpl.premium);
+  const extraTemplates = TEMPLATES.filter((tpl) => tpl.premium);
 
   useEffect(() => {
     api.listDocuments()
@@ -93,6 +111,10 @@ export function LandingScreen({ onEnter }: Props) {
 
   async function openTemplate(template: TemplateDefinition) {
     if (creating) return;
+    if (template.premium && !isPremium) {
+      setPremiumTemplate(template);
+      return;
+    }
     setCreating(template.id);
     try {
       const doc = {
@@ -252,16 +274,76 @@ export function LandingScreen({ onEnter }: Props) {
             gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
             gap: 20,
             padding: '24px',
+            paddingBottom: isPremium || extraTemplates.length === 0 ? 24 : 8,
           }}>
-            {TEMPLATES.map((template) => (
+            {(isPremium ? TEMPLATES : freeTemplates).map((template) => (
               <TemplateCard
                 key={template.id}
                 template={template}
                 loading={creating === template.id}
+                locked={!!template.premium && !isPremium}
                 onClick={() => openTemplate(template)}
               />
             ))}
           </div>
+
+          {/* More templates toggle -- only shown to non-premium visitors,
+              since premium users already see everything above. */}
+          {!isPremium && extraTemplates.length > 0 && (
+            <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'center' }}>
+              <button
+                onClick={() => setMoreTemplatesOpen((v) => !v)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '9px 18px',
+                  borderRadius: 20,
+                  border: '1.5px solid var(--color-border)',
+                  background: '#f8f9fa',
+                  color: 'var(--color-text)',
+                  fontSize: 12.5,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                {moreTemplatesOpen
+                  ? 'Show fewer templates'
+                  : `More templates (${extraTemplates.length})`}
+                <svg
+                  width="10" height="10" viewBox="0 0 10 10" fill="none"
+                  style={{
+                    transform: moreTemplatesOpen ? 'rotate(180deg)' : 'none',
+                    transition: 'transform 0.15s ease',
+                  }}
+                >
+                  <path d="M1.5 3.5L5 7L8.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {!isPremium && extraTemplates.length > 0 && moreTemplatesOpen && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
+              gap: 20,
+              padding: '0 24px 24px',
+              borderTop: '1.5px solid var(--color-border)',
+              marginTop: -1,
+              paddingTop: 24,
+            }}>
+              {extraTemplates.map((template) => (
+                <TemplateCard
+                  key={template.id}
+                  template={template}
+                  loading={creating === template.id}
+                  locked={true}
+                  onClick={() => openTemplate(template)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Recent documents section ───────────────── */}
@@ -361,6 +443,16 @@ export function LandingScreen({ onEnter }: Props) {
           }}
         />
       )}
+      {premiumTemplate && (
+        <PremiumRequiredDialog
+          featureName={`The "${premiumTemplate.label}" template`}
+          onClose={() => setPremiumTemplate(null)}
+          onUpgrade={() => {
+            setPremiumTemplate(null);
+            requestUpgrade();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -368,10 +460,12 @@ export function LandingScreen({ onEnter }: Props) {
 function TemplateCard({
   template,
   loading,
+  locked,
   onClick,
 }: {
   template: TemplateDefinition;
   loading: boolean;
+  locked: boolean;
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -396,6 +490,7 @@ function TemplateCard({
         transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
         boxShadow: hovered ? 'var(--shadow-md)' : 'var(--shadow-sm)',
         textAlign: 'left',
+        position: 'relative',
       }}
     >
       {/* Thumbnail */}
@@ -410,6 +505,35 @@ function TemplateCard({
         overflow: 'hidden',
       }}>
         <TemplateThumbnail id={template.id} />
+        {locked && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'rgba(255,255,255,0.4)',
+          }} />
+        )}
+        {locked && (
+          <div style={{
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 3,
+            padding: '3px 7px',
+            borderRadius: 10,
+            background: 'rgba(32,33,36,0.82)',
+            color: 'white',
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: '0.02em',
+          }}>
+            <svg width="9" height="9" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="3" y="7" width="10" height="7" rx="1.5" fill="white" />
+              <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="white" strokeWidth="1.4" fill="none" />
+            </svg>
+            PREMIUM
+          </div>
+        )}
         {loading && (
           <div style={{
             position: 'absolute', inset: 0,
