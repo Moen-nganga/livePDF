@@ -44,6 +44,11 @@ export function useAutoSave(delayMs = 1200): AutoSaveResult {
   // save completes).
   const lastSavedUpdatedAtRef = useRef<number | null>(null);
 
+  // Tracks which document id the ref above is tracking, so we can tell
+  // "the document itself changed" apart from "the current document was
+  // edited". See the effect below for why this matters.
+  const lastDocIdRef = useRef<string | null>(null);
+
   // Once a document has hit the weekly limit, further edits shouldn't keep
   // re-attempting the same doomed save on every debounce tick -- that would
   // just hammer the server with the same 403 forever. This flag short-
@@ -82,6 +87,28 @@ export function useAutoSave(delayMs = 1200): AutoSaveResult {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shareSession]);
+
+  // Whenever a *different* document gets loaded (opening a template, a
+  // recent document, or a shared link), treat it as already saved as of
+  // that moment. Every one of those paths either already persisted the
+  // document to the backend before handing it to the store (see
+  // LandingScreen's openTemplate/openRecent) or fetched it straight from
+  // the backend (shared documents) -- so there's nothing unsaved about it
+  // yet. Without this, lastSavedUpdatedAtRef would still be null (first
+  // document of the session) or stale from whatever document was open
+  // before, and hasUnsavedChanges would read true the instant a document
+  // opens even though the person hasn't touched anything.
+  useEffect(() => {
+    if (!document) {
+      lastDocIdRef.current = null;
+      return;
+    }
+    if (document.id !== lastDocIdRef.current) {
+      lastDocIdRef.current = document.id;
+      lastSavedUpdatedAtRef.current = document.updatedAt;
+      limitReachedRef.current = false;
+    }
+  }, [document]);
 
   useEffect(() => {
     if (!document) return;
