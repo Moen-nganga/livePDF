@@ -1029,7 +1029,12 @@ function WatermarkDialog({
   );
 }
 
-const FONT_SIZE_OPTIONS = Array.from({ length: 18 }, (_, i) => i + 1);
+// Typographic scale rather than a flat 1..N count -- steps start tight at
+// the small end (where a couple points makes a visible difference) and
+// widen out at the large end (where headings/titles live), matching how
+// Word/Docs/Illustrator size pickers are laid out instead of just listing
+// consecutive integers.
+const FONT_SIZE_OPTIONS = [6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 80, 96];
 
 interface FontSizeDropdownProps {
   value: number | undefined;
@@ -1046,7 +1051,7 @@ function FontSizeDropdown({ value, disabled, onChange }: FontSizeDropdownProps) 
       title={disabled ? 'Select a text box to change its font size' : 'Font size'}
       style={{ width: 56 }}
     >
-      {(!value || value < 1 || value > 18) && (
+      {(!value || !FONT_SIZE_OPTIONS.includes(value)) && (
         <option value="" disabled hidden>
           {value ?? 'Size'}
         </option>
