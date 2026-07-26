@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import { useAuthStore } from '../store/authStore';
@@ -33,6 +33,40 @@ export function LandingScreen({ onEnter }: Props) {
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
+
+  type RecentSort = 'modified' | 'title';
+  const [recentSort, setRecentSort] = useState<RecentSort>('modified');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+
+  const SORT_OPTIONS: { value: RecentSort; label: string }[] = [
+    { value: 'modified', label: 'Last modified' },
+    { value: 'title', label: 'Title (A–Z)' },
+  ];
+
+  const sortedRecent = useMemo(() => {
+    const copy = [...recent];
+    if (recentSort === 'title') {
+      copy.sort((a, b) =>
+        (a.title || 'Untitled document').localeCompare(b.title || 'Untitled document')
+      );
+    } else {
+      copy.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+    return copy;
+  }, [recent, recentSort]);
+
+  // Close the sort dropdown on an outside click.
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    function onClick(e: MouseEvent) {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target as Node)) {
+        setSortMenuOpen(false);
+      }
+    }
+    window.addEventListener('mousedown', onClick);
+    return () => window.removeEventListener('mousedown', onClick);
+  }, [sortMenuOpen]);
 
   // Same client-side-only caveat as elsewhere (Toolbar, AIChatWidget) --
   // this only decides what the landing screen shows/allows. The real
@@ -274,9 +308,9 @@ export function LandingScreen({ onEnter }: Props) {
             gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
             gap: 20,
             padding: '24px',
-            paddingBottom: isPremium || extraTemplates.length === 0 ? 24 : 8,
+            paddingBottom: extraTemplates.length === 0 ? 24 : 8,
           }}>
-            {(isPremium ? TEMPLATES : freeTemplates).map((template) => (
+            {freeTemplates.map((template) => (
               <TemplateCard
                 key={template.id}
                 template={template}
@@ -287,9 +321,10 @@ export function LandingScreen({ onEnter }: Props) {
             ))}
           </div>
 
-          {/* More templates toggle -- only shown to non-premium visitors,
-              since premium users already see everything above. */}
-          {!isPremium && extraTemplates.length > 0 && (
+          {/* More templates toggle -- shown to everyone, premium or not, to
+              keep the initial grid short. The only difference for premium
+              users is that nothing behind it is actually locked. */}
+          {extraTemplates.length > 0 && (
             <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'center' }}>
               <button
                 onClick={() => setMoreTemplatesOpen((v) => !v)}
@@ -323,7 +358,7 @@ export function LandingScreen({ onEnter }: Props) {
             </div>
           )}
 
-          {!isPremium && extraTemplates.length > 0 && moreTemplatesOpen && (
+          {extraTemplates.length > 0 && moreTemplatesOpen && (
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
@@ -338,7 +373,7 @@ export function LandingScreen({ onEnter }: Props) {
                   key={template.id}
                   template={template}
                   loading={creating === template.id}
-                  locked={true}
+                  locked={!isPremium}
                   onClick={() => openTemplate(template)}
                 />
               ))}
@@ -371,18 +406,99 @@ export function LandingScreen({ onEnter }: Props) {
                 {t('landing.pickUpWhereYouLeftOff')}
               </div>
             </div>
-            {recent.length > 0 && (
-              <div style={{
-                fontSize: 11,
-                fontWeight: 500,
-                color: 'var(--color-text-muted)',
-                background: '#f1f3f4',
-                padding: '4px 10px',
-                borderRadius: 12,
-              }}>
-                {t('landing.documentsCount', { count: recent.length, plural: recent.length !== 1 ? 's' : '' })}
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {recent.length > 1 && (
+                <div ref={sortMenuRef} style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => setSortMenuOpen((v) => !v)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      border: '1.5px solid var(--color-border)',
+                      background: 'var(--color-surface)',
+                      color: 'var(--color-text-secondary)',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M4 4h8M4 8h5M4 12h2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                      <path d="M12 8v5m0 0l-2-2m2 2l2-2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    {SORT_OPTIONS.find((o) => o.value === recentSort)?.label}
+                    <svg
+                      width="9" height="9" viewBox="0 0 10 10" fill="none"
+                      style={{ transform: sortMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}
+                    >
+                      <path d="M1.5 3.5L5 7L8.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  {sortMenuOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 6px)',
+                      right: 0,
+                      minWidth: 190,
+                      background: 'var(--color-surface)',
+                      border: '1.5px solid var(--color-border)',
+                      borderRadius: 10,
+                      boxShadow: '0 8px 28px rgba(0,0,0,0.15)',
+                      overflow: 'hidden',
+                      zIndex: 30,
+                    }}>
+                      {SORT_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => {
+                            setRecentSort(opt.value);
+                            setSortMenuOpen(false);
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            width: '100%',
+                            padding: '9px 12px',
+                            border: 'none',
+                            background: opt.value === recentSort ? '#f8faff' : 'transparent',
+                            color: 'var(--color-text)',
+                            fontSize: 12.5,
+                            fontWeight: opt.value === recentSort ? 600 : 400,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <span style={{ width: 14, display: 'inline-flex', color: 'var(--color-accent)' }}>
+                            {opt.value === recentSort && (
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                <path d="M2 6.2L4.6 9L10 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </span>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {recent.length > 0 && (
+                <div style={{
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-text-muted)',
+                  background: '#f1f3f4',
+                  padding: '4px 10px',
+                  borderRadius: 12,
+                }}>
+                  {t('landing.documentsCount', { count: recent.length, plural: recent.length !== 1 ? 's' : '' })}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Recent content */}
@@ -421,11 +537,11 @@ export function LandingScreen({ onEnter }: Props) {
                 ))}
               </div>
               {/* Document rows */}
-              {recent.map((doc, i) => (
+              {sortedRecent.map((doc, i) => (
                 <RecentCard
                   key={doc.id}
                   doc={doc}
-                  isLast={i === recent.length - 1}
+                  isLast={i === sortedRecent.length - 1}
                   onClick={() => openRecent(doc)}
                 />
               ))}
