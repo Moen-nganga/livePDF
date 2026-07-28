@@ -16,11 +16,11 @@ const FAQ_GROUPS: FaqGroup[] = [
     items: [
       {
         q: 'How do I create a new document?',
-        a: 'From the landing screen, pick a template or choose "Blank document" under Start a new document. Your document opens straight into the editor and starts autosaving.',
+        a: 'From the home screen, pick a template or choose "Blank document" under Start a new document. Your document opens straight into the editor and starts autosaving.',
       },
       {
         q: 'Do I need an account?',
-        a: "You can create and edit documents without signing in. Signing in (via a one-time email link) lets your documents sync and lets you subscribe to Premium.",
+        a: "You can create and edit documents without signing in. Signing in (via a one-time email link) or through your Google account lets your documents sync and lets you subscribe to Premium.",
       },
     ],
   },
@@ -29,11 +29,11 @@ const FAQ_GROUPS: FaqGroup[] = [
     items: [
       {
         q: 'Does livePDF save my work automatically?',
-        a: 'Yes — changes are saved automatically about a second after you stop editing. You can see the current save status in the top-right of the editor.',
+        a: 'Yes, changes are saved automatically about a second after you stop editing. You can see the current save status in the top-right of the editor.',
       },
       {
         q: 'Why does it say "Weekly limit reached"?',
-        a: 'Free accounts can save a limited number of documents per week. Upgrading to Premium removes this limit.',
+        a: 'Free accounts can save a limited number of documents per week. Upgrading to Premium removes this limit and allows you to edit as many documents as you want.',
       },
       {
         q: 'Can I use livePDF offline?',
@@ -72,15 +72,11 @@ const FAQ_GROUPS: FaqGroup[] = [
     items: [
       {
         q: 'What does Premium include?',
-        a: 'Premium removes the weekly save limit and unlocks premium templates, the signature tool, and the AI assistant.',
+        a: 'Premium removes the weekly save limit, removes the 20-pages per PDF cap, and unlocks premium templates, the signature tool, and the AI assistant.',
       },
       {
         q: 'What payment methods are supported?',
         a: 'We support card payments via Stripe and crypto payments via Binance Pay.',
-      },
-      {
-        q: 'How do I cancel my subscription?',
-        a: "You can cancel anytime from your account menu. You'll keep Premium access until the end of your current billing period.",
       },
     ],
   },

@@ -40,6 +40,7 @@ export function PrivacyPolicyScreen({ onBack }: Props) {
         <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
           <li>Provide, maintain, and sync your documents across sessions</li>
           <li>Authenticate you via magic sign-in links</li>
+          <li>Authenticate user accounts</li>
           <li>Process and manage Premium subscriptions</li>
           <li>Respond to support requests</li>
           <li>Improve the reliability and features of the editor</li>

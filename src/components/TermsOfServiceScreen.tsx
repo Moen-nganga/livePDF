@@ -30,14 +30,12 @@ export function TermsOfServiceScreen({ onBack }: Props) {
 
       <StaticSection title="3. Free & Premium Plans">
         <p>
-          The free plan includes a limited number of document saves per week. Premium plans (billed
-          monthly or yearly) remove that limit and unlock premium templates, signatures, and the AI
-          assistant.
+          The free plan includes a limited number of document saves per week, and PDFs are 
+          capped to only 20 pages per week. Premium plans (billed monthly or yearly) remove that 
+          limit and unlock premium templates, signatures, and the AI assistant.
         </p>
         <p style={{ marginTop: 8 }}>
-          Premium subscriptions are billed in advance through Stripe or Binance Pay and renew
-          automatically until canceled. You can cancel anytime from your account menu; access continues
-          until the end of the current billing period.
+          Premium subscriptions are billed in advance through Stripe or Binance Pay. 
         </p>
       </StaticSection>
 
@@ -66,14 +64,7 @@ export function TermsOfServiceScreen({ onBack }: Props) {
         </p>
       </StaticSection>
 
-      <StaticSection title="7. Termination">
-        <p>
-          You may stop using livePDF and delete your account at any time. We may suspend or terminate
-          accounts that violate these Terms.
-        </p>
-      </StaticSection>
-
-      <StaticSection title="8. Disclaimer & Limitation of Liability">
+      <StaticSection title="7. Disclaimer & Limitation of Liability">
         <p>
           To the fullest extent permitted by law, livePDF is provided without warranties of any kind, and
           our liability for any claim relating to the service is limited to the amount you paid us in the
@@ -81,7 +72,7 @@ export function TermsOfServiceScreen({ onBack }: Props) {
         </p>
       </StaticSection>
 
-      <StaticSection title="9. Changes to These Terms">
+      <StaticSection title="8. Changes to These Terms">
         <p>
           We may update these Terms from time to time. Continuing to use livePDF after a change means you
           accept the updated Terms.
