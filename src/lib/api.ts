@@ -1,7 +1,10 @@
 import type { PDFDocument } from '../types/document';
 import { getDeviceId } from './deviceId';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8787';
+// Exported so other modules (e.g. AuthScreen's "Continue with Google" link)
+// can build absolute URLs to the API's own routes -- needed for the OAuth
+// redirect flow, which navigates the whole page rather than fetching.
+export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8787';
 
 function headers() {
   return {

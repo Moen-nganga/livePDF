@@ -47,6 +47,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     'auth.back': '← Back',
     'auth.checkEmailTitle': 'Check your email',
     'auth.checkEmailBody': 'We sent a sign-in link to {email}. It expires in 15 minutes and works once — click it to finish signing in.',
+    'auth.continueWithGoogle': 'Sign in with Google',
+    'auth.or': 'or',
+    'auth.googleError': 'Google sign-in failed. Please try again.',
+    'auth.googleUnverified': 'Your Google email is not verified.',
 
     // Editor header
     'editor.home': 'Home',
@@ -101,6 +105,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     'auth.back': '← Rudi',
     'auth.checkEmailTitle': 'Angalia barua pepe yako',
     'auth.checkEmailBody': 'Tumetuma kiungo cha kuingia kwa {email}. Kinaisha muda baada ya dakika 15 na kinatumika mara moja tu — kibonyeze kumaliza kuingia.',
+    'auth.continueWithGoogle': 'Ingia kwa Google',
+    'auth.or': 'au',
+    'auth.googleError': 'Kuingia kwa Google kumeshindwa. Tafadhali jaribu tena.',
+    'auth.googleUnverified': 'Barua pepe yako ya Google haijathibitishwa.',
 
     'editor.home': 'Nyumbani',
     'editor.downloadPdf': 'Pakua PDF',
@@ -153,6 +161,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     'auth.back': '← Retour',
     'auth.checkEmailTitle': 'Vérifiez votre e-mail',
     'auth.checkEmailBody': "Nous avons envoyé un lien de connexion à {email}. Il expire dans 15 minutes et ne fonctionne qu'une fois — cliquez dessus pour terminer la connexion.",
+    'auth.continueWithGoogle': 'Se connecter avec Google',
+    'auth.or': 'ou',
+    'auth.googleError': 'La connexion avec Google a échoué. Veuillez réessayer.',
+    'auth.googleUnverified': "Votre adresse e-mail Google n'est pas vérifiée.",
 
     'editor.home': 'Accueil',
     'editor.downloadPdf': 'Télécharger le PDF',
@@ -205,6 +217,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     'auth.back': '← Volver',
     'auth.checkEmailTitle': 'Revisa tu correo',
     'auth.checkEmailBody': 'Enviamos un enlace de acceso a {email}. Caduca en 15 minutos y funciona una sola vez — haz clic para completar el inicio de sesión.',
+    'auth.continueWithGoogle': 'Iniciar sesión con Google',
+    'auth.or': 'o',
+    'auth.googleError': 'Error al iniciar sesión con Google. Inténtalo de nuevo.',
+    'auth.googleUnverified': 'Tu correo de Google no está verificado.',
 
     'editor.home': 'Inicio',
     'editor.downloadPdf': 'Descargar PDF',
