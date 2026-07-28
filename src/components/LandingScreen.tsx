@@ -11,6 +11,9 @@ import { AccountMenu } from './AccountMenu';
 import { UpgradeScreen } from './UpgradeScreen';
 import { LimitReachedDialog } from './LimitReachedDialog';
 import { PremiumRequiredDialog } from './PremiumRequiredDialog';
+import { PrivacyPolicyScreen } from './PrivacyPolicyScreen';
+import { TermsOfServiceScreen } from './TermsOfServiceScreen';
+import { HelpCenterScreen } from './HelpCenterScreen';
 
 interface Props {
   onEnter: () => void;
@@ -30,6 +33,7 @@ export function LandingScreen({ onEnter }: Props) {
   const t = useI18nStore((s) => s.t);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
+  const [staticPage, setStaticPage] = useState<'privacy' | 'terms' | 'help' | null>(null);
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
@@ -203,6 +207,18 @@ export function LandingScreen({ onEnter }: Props) {
     return <UpgradeScreen onBack={() => setShowUpgradeScreen(false)} />;
   }
 
+  if (staticPage === 'privacy') {
+    return <PrivacyPolicyScreen onBack={() => setStaticPage(null)} />;
+  }
+
+  if (staticPage === 'terms') {
+    return <TermsOfServiceScreen onBack={() => setStaticPage(null)} />;
+  }
+
+  if (staticPage === 'help') {
+    return <HelpCenterScreen onBack={() => setStaticPage(null)} />;
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -262,7 +278,7 @@ export function LandingScreen({ onEnter }: Props) {
       </header>
 
       {/* ── Main content ───────────────────────────────── */}
-      <div style={{ maxWidth: 1020, margin: '0 auto', padding: '44px 28px 100px' }}>
+      <div style={{ maxWidth: 1020, margin: '0 auto', padding: '44px 28px 48px' }}>
 
         {/* ── Templates section ──────────────────────── */}
         <div style={{
@@ -549,6 +565,80 @@ export function LandingScreen({ onEnter }: Props) {
           )}
         </div>
       </div>
+
+      {/* ── Footer ─────────────────────────────────────── */}
+      <footer id="app-footer" style={{
+        background: '#0a0a0a',
+        marginTop: 8,
+      }}>
+        <div style={{
+          maxWidth: 1020,
+          margin: '0 auto',
+          padding: '48px 28px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 20,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              background: '#ffffff',
+              borderRadius: 8,
+              padding: '5px 8px',
+            }}>
+              <img src="/logo/PDF.png" alt="" style={{ height: 22, width: 'auto' }} />
+            </div>
+            <span style={{ fontSize: 13.5, color: '#a2a5aa' }}>
+              © {new Date().getFullYear()} {t('app.name')}. All rights reserved.
+            </span>
+          </div>
+          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 28 }}>
+            {[
+              { label: 'Privacy Policy', onClick: () => setStaticPage('privacy') },
+              { label: 'Terms of Service', onClick: () => setStaticPage('terms') },
+              { label: 'Help Center', onClick: () => setStaticPage('help') },
+              { label: 'Contact', href: '/contact' }, // TODO: wire up once the Contact page exists
+            ].map((link) =>
+              'href' in link ? (
+                <a
+                  key={link.label}
+                  href={link.href}
+                  style={{
+                    fontSize: 13.5,
+                    color: '#a2a5aa',
+                    textDecoration: 'none',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = '#a2a5aa')}
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <button
+                  key={link.label}
+                  onClick={link.onClick}
+                  style={{
+                    fontSize: 13.5,
+                    color: '#a2a5aa',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = '#a2a5aa')}
+                >
+                  {link.label}
+                </button>
+              )
+            )}
+          </nav>
+        </div>
+      </footer>
       {limitReachedMessage && (
         <LimitReachedDialog
           message={limitReachedMessage}

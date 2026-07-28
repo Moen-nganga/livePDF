@@ -18,6 +18,34 @@ export function AIChatWidget({ isPremium, documentContext, onRequirePremium }: P
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Keeps the floating button clear of the page footer (present on the
+  // landing screen, id="app-footer") -- without this it sits fixed to the
+  // viewport bottom and ends up hovering on top of the footer's text once
+  // the person scrolls all the way down. Recomputed on scroll/resize
+  // rather than once on mount since the footer only exists on some screens
+  // and its position shifts as the page scrolls.
+  const BASE_OFFSET = 20;
+  const [bottomOffset, setBottomOffset] = useState(BASE_OFFSET);
+
+  useEffect(() => {
+    function updateOffset() {
+      const footer = window.document.getElementById('app-footer');
+      if (!footer) {
+        setBottomOffset(BASE_OFFSET);
+        return;
+      }
+      const visibleHeight = window.innerHeight - footer.getBoundingClientRect().top;
+      setBottomOffset(visibleHeight > 0 ? BASE_OFFSET + visibleHeight : BASE_OFFSET);
+    }
+    updateOffset();
+    window.addEventListener('scroll', updateOffset, { passive: true });
+    window.addEventListener('resize', updateOffset);
+    return () => {
+      window.removeEventListener('scroll', updateOffset);
+      window.removeEventListener('resize', updateOffset);
+    };
+  }, []);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, loading]);
@@ -60,7 +88,7 @@ export function AIChatWidget({ isPremium, documentContext, onRequirePremium }: P
 
   return (
     <>
-      <div style={{ position: 'fixed', bottom: 20, right: 20, zIndex: 1500 }}>
+      <div style={{ position: 'fixed', bottom: bottomOffset, right: 20, zIndex: 1500, transition: 'bottom 0.1s linear' }}>
         {open && (
           <div
             className="surface-card"
