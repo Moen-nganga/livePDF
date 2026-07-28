@@ -44,7 +44,9 @@ export async function createCheckoutSession(
     client_reference_id: userId,
     customer_email: email,
     metadata: { userId, planId },
-    subscription_data: { metadata: { userId, planId } },
+    subscription_data: {
+      metadata: { userId, planId },
+    },
     success_url: `${APP_URL}/?upgraded=stripe`,
     cancel_url: `${APP_URL}/?upgradeCanceled=1`,
   });
@@ -65,7 +67,19 @@ export async function handleStripeWebhookEvent(event: Stripe.Event): Promise<voi
       const planId = session.metadata?.planId as PlanId | undefined;
       if (!userId || !planId || typeof session.subscription !== 'string') break;
 
-      const subscription = await stripe.subscriptions.retrieve(session.subscription);
+      // Per product decision: NO auto-renewal on either payment rail
+      // (Binance Pay is inherently one-time already, see binancePay.ts).
+      // cancel_at_period_end can only be set on an existing subscription
+      // (not requested at Checkout Session creation time), so it's applied
+      // here, right after Stripe confirms the subscription actually
+      // exists. This makes Stripe automatically cancel it at the end of
+      // the current billing period instead of charging the card again --
+      // the user keeps access through what they already paid for, then
+      // has to actively check out again to continue.
+      const subscription = await stripe.subscriptions.update(session.subscription, {
+        cancel_at_period_end: true,
+      });
+
       await subscriptionsRepo.upsert({
         user_id: userId,
         plan_id: planId,
@@ -81,7 +95,10 @@ export async function handleStripeWebhookEvent(event: Stripe.Event): Promise<voi
 
     // Fires on renewals, plan changes, and cancellation-at-period-end
     // toggles -- keeps our copy of status/period-end in sync without
-    // waiting for the user to do anything in our own UI.
+    // waiting for the user to do anything in our own UI. With
+    // cancel_at_period_end always true now, the meaningful transition
+    // here is customer.subscription.deleted once the period actually
+    // ends (Stripe fires that instead of ever attempting a renewal charge).
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;

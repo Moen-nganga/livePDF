@@ -19,9 +19,6 @@ export function UpgradeScreen({ onBack }: Props) {
         provider === 'stripe'
           ? await api.createStripeCheckout(selectedPlan)
           : await api.createBinanceCheckout(selectedPlan);
-      // Full-page redirect to the provider's own hosted checkout page --
-      // both Stripe Checkout and Binance Pay's checkoutUrl are meant to be
-      // navigated to directly, not embedded.
       window.location.href = url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
@@ -39,37 +36,51 @@ export function UpgradeScreen({ onBack }: Props) {
       justifyContent: 'center',
       padding: 24,
       overflowY: 'auto',
+      boxSizing: 'border-box',
     }}>
       <div style={{
         width: '100%',
-        maxWidth: 640,
+        maxWidth: 760,
+        maxHeight: '92vh',
+        overflowY: 'auto',
         background: 'var(--color-surface)',
         border: '1.5px solid var(--color-border)',
         borderRadius: 14,
         boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-        padding: '40px 36px',
+        padding: '36px 32px',
+        boxSizing: 'border-box',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>⭐</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text)' }}>
             Upgrade to Premium
           </div>
-          <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginTop: 6 }}>
+          <p style={{
+            fontSize: 13,
+            color: 'var(--color-text-muted)',
+            marginTop: 6,
+            lineHeight: 1.5,
+            maxWidth: 480,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}>
             Unlock clean exports, OCR, batch export, spellchecking, more templates,
             unlimited documents, and an AI writing assistant.
           </p>
         </div>
 
         {/* Plan selector */}
-        <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+        <div style={{ display: 'flex', gap: 14, marginBottom: 24, flexWrap: 'wrap' }}>
           {PLANS.map((plan) => (
             <button
               key={plan.id}
               onClick={() => setSelectedPlan(plan.id)}
               style={{
-                flex: 1,
+                flex: '1 1 260px',
+                minWidth: 240,
+                boxSizing: 'border-box',
                 textAlign: 'left',
-                padding: '16px 18px',
+                padding: '18px 20px',
                 borderRadius: 10,
                 border: selectedPlan === plan.id ? '2px solid #1a73e8' : '1.5px solid var(--color-border)',
                 background: selectedPlan === plan.id ? '#f0f6ff' : 'transparent',
@@ -85,24 +96,27 @@ export function UpgradeScreen({ onBack }: Props) {
                   {' '}/ {plan.interval}
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4, marginBottom: 12, lineHeight: 1.4 }}>
                 {plan.tagline}
               </div>
-              <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                 {plan.features.map((feature) => (
                   <li
                     key={feature}
                     style={{
                       fontSize: 12,
                       color: 'var(--color-text-secondary)',
-                      marginBottom: 4,
+                      marginBottom: 7,
                       display: 'flex',
                       alignItems: 'flex-start',
-                      gap: 6,
+                      gap: 7,
+                      lineHeight: 1.4,
                     }}
                   >
                     <span style={{ color: '#1a73e8', flexShrink: 0 }}>✓</span>
-                    <span>{feature}</span>
+                    <span style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0 }}>
+                      {feature}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -120,6 +134,7 @@ export function UpgradeScreen({ onBack }: Props) {
           disabled={loadingProvider !== null}
           style={{
             width: '100%',
+            boxSizing: 'border-box',
             padding: '12px 0',
             borderRadius: 8,
             border: 'none',
@@ -140,6 +155,7 @@ export function UpgradeScreen({ onBack }: Props) {
           disabled={loadingProvider !== null}
           style={{
             width: '100%',
+            boxSizing: 'border-box',
             padding: '12px 0',
             borderRadius: 8,
             border: '1.5px solid #f0b90b',
@@ -160,6 +176,7 @@ export function UpgradeScreen({ onBack }: Props) {
           disabled={loadingProvider !== null}
           style={{
             width: '100%',
+            boxSizing: 'border-box',
             padding: '10px 0',
             borderRadius: 8,
             border: '1.5px solid var(--color-border)',

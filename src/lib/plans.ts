@@ -18,12 +18,10 @@ export interface PlanDisplay {
 // types/subscription.ts / server/src/plans.ts -- both pro plans unlock
 // the same feature set today, just billed differently.
 const PRO_FEATURES = [
-  'Clean exports (no watermark)',
-  'OCR text recognition',
-  'Batch export',
-  'Merge & split PDFs',
-  'Spellchecker',
-  'Unlimited PDF documents',
+  'Unlimited number of PDFs that can be edited',
+  'Unlimited number of Pages that can be added to a PDF',
+  'E-signature adding features',
+  'Access to spelling checking features',
   'Access to more PDF templates',
   'AI assistant for writing PDFs',
 ];
