@@ -17,6 +17,7 @@ import { PdfCanvas } from './components/PdfCanvas';
 import { PageNav } from './components/PageNav';
 import { UploadButton } from './components/UploadButton';
 import { MergePdfsButton } from './components/MergePdfsButton';
+import { SplitPdfButton } from './components/SplitPdfButton';
 import { DownloadDialog } from './components/DownloadDialog';
 import { LandingScreen } from './components/LandingScreen';
 import { AuthScreen } from './components/AuthScreen';
@@ -277,6 +278,7 @@ export default function App() {
             )}
             {isOwner && <UploadButton />}
             {isOwner && <MergePdfsButton />}
+            {isOwner && <SplitPdfButton />}
             <button className="btn-accent" onClick={() => setDownloadDialogOpen(true)}>
               Download PDF
             </button>

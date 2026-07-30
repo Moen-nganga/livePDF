@@ -58,7 +58,7 @@ export function MergePdfsButton() {
         disabled={loading}
         title="Select 2 or more PDFs to combine into one editable document"
       >
-        {loading ? 'Merging…' : 'Merge PDFs'}
+        {loading ? 'Merging…' : 'Merge PDF'}
       </button>
       <input
         ref={fileInputRef}
