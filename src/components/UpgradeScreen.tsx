@@ -40,7 +40,7 @@ export function UpgradeScreen({ onBack }: Props) {
     }}>
       <div style={{
         width: '100%',
-        maxWidth: 760,
+        maxWidth: 880,
         maxHeight: '92vh',
         overflowY: 'auto',
         background: 'var(--color-surface)',
@@ -77,7 +77,7 @@ export function UpgradeScreen({ onBack }: Props) {
               onClick={() => setSelectedPlan(plan.id)}
               style={{
                 flex: '1 1 260px',
-                minWidth: 240,
+                minWidth: 0,
                 boxSizing: 'border-box',
                 textAlign: 'left',
                 padding: '18px 20px',
