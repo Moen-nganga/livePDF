@@ -29,7 +29,10 @@ export function UpgradeScreen({ onBack }: Props) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(160deg, #f0f4ff 0%, #f0f2f5 50%, #f5f0f8 100%)',
+      background:
+        'radial-gradient(circle at 15% 0%, rgba(179, 18, 42, 0.05) 0%, rgba(179, 18, 42, 0) 45%), ' +
+        'radial-gradient(circle at 100% 100%, rgba(179, 18, 42, 0.04) 0%, rgba(179, 18, 42, 0) 50%), ' +
+        '#fffdfd',
       fontFamily: 'var(--font-family)',
       display: 'flex',
       alignItems: 'center',
@@ -45,13 +48,25 @@ export function UpgradeScreen({ onBack }: Props) {
         overflowY: 'auto',
         background: 'var(--color-surface)',
         border: '1.5px solid var(--color-border)',
-        borderRadius: 14,
-        boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
+        borderRadius: 20,
+        boxShadow: 'var(--shadow-lg)',
         padding: '36px 32px',
         boxSizing: 'border-box',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>⭐</div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+            <svg
+              width={32}
+              height={32}
+              viewBox="0 0 24 24"
+              fill="var(--color-accent)"
+              stroke="var(--color-accent-hover)"
+              strokeWidth={1.5}
+              strokeLinejoin="round"
+            >
+              <path d="M12 2.5l2.9 6.06 6.6.77-4.9 4.53 1.28 6.6L12 17.3l-5.88 3.16 1.28-6.6-4.9-4.53 6.6-.77z" />
+            </svg>
+          </div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text)' }}>
             Upgrade to Premium
           </div>
@@ -81,10 +96,14 @@ export function UpgradeScreen({ onBack }: Props) {
                 boxSizing: 'border-box',
                 textAlign: 'left',
                 padding: '18px 20px',
-                borderRadius: 10,
-                border: selectedPlan === plan.id ? '2px solid #1a73e8' : '1.5px solid var(--color-border)',
-                background: selectedPlan === plan.id ? '#f0f6ff' : 'transparent',
+                borderRadius: 14,
+                border: selectedPlan === plan.id
+                  ? '2px solid var(--color-accent)'
+                  : '1.5px solid var(--color-border)',
+                background: selectedPlan === plan.id ? 'var(--color-accent-bg)' : 'transparent',
                 cursor: 'pointer',
+                transition: 'border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease',
+                boxShadow: selectedPlan === plan.id ? 'var(--shadow-sm)' : 'none',
               }}
             >
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)' }}>
@@ -113,7 +132,7 @@ export function UpgradeScreen({ onBack }: Props) {
                       lineHeight: 1.4,
                     }}
                   >
-                    <span style={{ color: '#1a73e8', flexShrink: 0 }}>✓</span>
+                    <span style={{ color: 'var(--color-accent)', flexShrink: 0 }}>✓</span>
                     <span style={{ overflowWrap: 'break-word', wordBreak: 'break-word', minWidth: 0 }}>
                       {feature}
                     </span>
@@ -125,7 +144,7 @@ export function UpgradeScreen({ onBack }: Props) {
         </div>
 
         {error && (
-          <p style={{ color: '#dc2626', fontSize: 13, marginBottom: 12, textAlign: 'center' }}>{error}</p>
+          <p style={{ color: 'var(--color-danger)', fontSize: 13, marginBottom: 12, textAlign: 'center' }}>{error}</p>
         )}
 
         {/* Checkout buttons */}
@@ -136,15 +155,17 @@ export function UpgradeScreen({ onBack }: Props) {
             width: '100%',
             boxSizing: 'border-box',
             padding: '12px 0',
-            borderRadius: 8,
+            borderRadius: 12,
             border: 'none',
-            background: '#1a73e8',
+            background: 'linear-gradient(180deg, #c41930 0%, var(--color-accent) 100%)',
             color: 'white',
             fontSize: 14,
             fontWeight: 600,
             cursor: loadingProvider ? 'default' : 'pointer',
             opacity: loadingProvider && loadingProvider !== 'stripe' ? 0.6 : 1,
             marginBottom: 10,
+            boxShadow: 'var(--shadow-accent-glow)',
+            transition: 'box-shadow 0.15s ease, opacity 0.15s ease',
           }}
         >
           {loadingProvider === 'stripe' ? 'Redirecting…' : 'Pay with card (Stripe)'}
@@ -157,15 +178,16 @@ export function UpgradeScreen({ onBack }: Props) {
             width: '100%',
             boxSizing: 'border-box',
             padding: '12px 0',
-            borderRadius: 8,
-            border: '1.5px solid #f0b90b',
+            borderRadius: 12,
+            border: '1.5px solid var(--color-border-strong)',
             background: 'transparent',
-            color: '#8a6d00',
+            color: 'var(--color-text-secondary)',
             fontSize: 14,
             fontWeight: 600,
             cursor: loadingProvider ? 'default' : 'pointer',
             opacity: loadingProvider && loadingProvider !== 'binance' ? 0.6 : 1,
             marginBottom: 20,
+            transition: 'background 0.15s ease, opacity 0.15s ease',
           }}
         >
           {loadingProvider === 'binance' ? 'Redirecting…' : 'Pay with crypto (Binance Pay)'}
@@ -178,7 +200,7 @@ export function UpgradeScreen({ onBack }: Props) {
             width: '100%',
             boxSizing: 'border-box',
             padding: '10px 0',
-            borderRadius: 8,
+            borderRadius: 12,
             border: '1.5px solid var(--color-border)',
             background: 'transparent',
             fontSize: 13,
