@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/authStore';
 import { useSubscriptionStore } from '../store/subscriptionStore';
 import { useI18nStore } from '../store/i18nStore';
 import { TEMPLATES, type TemplateDefinition } from '../lib/templates';
-import { api, WeeklyLimitError, type DocumentSummary } from '../lib/api';
+import { api, WeeklyLimitError, type DocumentSummary, type UsageInfo } from '../lib/api';
 import { AuthScreen } from './AuthScreen';
 import { AccountMenu } from './AccountMenu';
 import { UpgradeScreen } from './UpgradeScreen';
@@ -37,6 +37,12 @@ export function LandingScreen({ onEnter }: Props) {
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
+
+  // Weekly free-tier usage, fetched read-only (no save attempt) so we can
+  // gate BOTH creating new documents (already covered by WeeklyLimitError
+  // from api.saveDocument) and opening old ones (a pure GET that would
+  // otherwise sail right past the limit -- see openRecent below).
+  const [usage, setUsage] = useState<UsageInfo | null>(null);
 
   type RecentSort = 'modified' | 'title';
   const [recentSort, setRecentSort] = useState<RecentSort>('modified');
@@ -93,14 +99,15 @@ export function LandingScreen({ onEnter }: Props) {
       .finally(() => setLoadingRecent(false));
   }, []);
 
-  // Checks session + subscription on every load. The landing screen can be
-  // the very first thing a user sees, so this can't wait for the
-  // ?upgraded= redirect below -- someone who subscribed last week and is
+  // Checks session + subscription + weekly usage on every load. The landing
+  // screen can be the very first thing a user sees, so this can't wait for
+  // the ?upgraded= redirect below -- someone who subscribed last week and is
   // just opening the app normally today still needs their real plan
-  // fetched here, not left at whatever the default state was.
+  // (and usage) fetched here, not left at whatever the default state was.
   useEffect(() => {
     if (authStatus === 'idle') fetchMe();
     fetchSubscription();
+    api.getUsage().then(setUsage).catch(() => setUsage(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -189,6 +196,17 @@ export function LandingScreen({ onEnter }: Props) {
   }
 
   async function openRecent(summary: DocumentSummary) {
+    // Opening an OLD document is a pure read (api.getDocument), so it never
+    // naturally hits the server's weekly_limit_reached check the way
+    // creating a new one does. Gate it here using the read-only usage
+    // snapshot fetched on mount, so free users who've hit their weekly cap
+    // can't keep working just by reopening old files instead of new ones.
+    if (usage?.limitReached) {
+      setLimitReachedMessage(
+        `Free plan is limited to ${usage.limit} PDFs per week. Upgrade to Premium for unlimited.`
+      );
+      return;
+    }
     try {
       const doc = await api.getDocument(summary.id);
       loadDocument(doc);
@@ -419,7 +437,9 @@ export function LandingScreen({ onEnter }: Props) {
                 {t('landing.recentDocuments')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                {t('landing.pickUpWhereYouLeftOff')}
+                {usage?.limitReached
+                  ? 'Weekly limit reached — upgrade to keep editing.'
+                  : t('landing.pickUpWhereYouLeftOff')}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -558,6 +578,7 @@ export function LandingScreen({ onEnter }: Props) {
                   key={doc.id}
                   doc={doc}
                   isLast={i === sortedRecent.length - 1}
+                  locked={!!usage?.limitReached}
                   onClick={() => openRecent(doc)}
                 />
               ))}
@@ -1196,7 +1217,17 @@ function AnalyticsDashboardThumbnail() {
   );
 }
 
-function RecentCard({ doc, isLast, onClick }: { doc: DocumentSummary; isLast: boolean; onClick: () => void }) {
+function RecentCard({
+  doc,
+  isLast,
+  locked,
+  onClick,
+}: {
+  doc: DocumentSummary;
+  isLast: boolean;
+  locked: boolean;
+  onClick: () => void;
+}) {
   const [hovered, setHovered] = useState(false);
   const t = useI18nStore((s) => s.t);
 
@@ -1210,8 +1241,9 @@ function RecentCard({ doc, isLast, onClick }: { doc: DocumentSummary; isLast: bo
         alignItems: 'center',
         padding: '14px 24px',
         borderBottom: isLast ? 'none' : '1px solid var(--color-border)',
-        background: hovered ? '#f8faff' : 'transparent',
-        transition: 'background 0.12s ease',
+        background: hovered && !locked ? '#f8faff' : 'transparent',
+        opacity: locked ? 0.55 : 1,
+        transition: 'background 0.12s ease, opacity 0.12s ease',
         cursor: 'pointer',
       }}
       onClick={onClick}
@@ -1247,22 +1279,44 @@ function RecentCard({ doc, isLast, onClick }: { doc: DocumentSummary; isLast: bo
 
       {/* Open button */}
       <div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onClick(); }}
-          style={{
-            fontSize: 12,
-            padding: '5px 14px',
-            borderRadius: 20,
-            border: '1.5px solid var(--color-accent)',
-            background: hovered ? 'var(--color-accent)' : 'transparent',
-            color: hovered ? 'white' : 'var(--color-accent)',
-            fontWeight: 500,
-            transition: 'background 0.15s ease, color 0.15s ease',
-            cursor: 'pointer',
-          }}
-        >
-          {t('landing.open')}
-        </button>
+        {locked ? (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '5px 12px',
+              borderRadius: 20,
+              background: 'rgba(32,33,36,0.08)',
+              color: 'var(--color-text-muted)',
+            }}
+          >
+            <svg width="9" height="9" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor" />
+              <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.4" fill="none" />
+            </svg>
+            Limit reached
+          </span>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); onClick(); }}
+            style={{
+              fontSize: 12,
+              padding: '5px 14px',
+              borderRadius: 20,
+              border: '1.5px solid var(--color-accent)',
+              background: hovered ? 'var(--color-accent)' : 'transparent',
+              color: hovered ? 'white' : 'var(--color-accent)',
+              fontWeight: 500,
+              transition: 'background 0.15s ease, color 0.15s ease',
+              cursor: 'pointer',
+            }}
+          >
+            {t('landing.open')}
+          </button>
+        )}
       </div>
     </div>
   );

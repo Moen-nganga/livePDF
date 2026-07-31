@@ -1,3 +1,5 @@
+import { Star } from 'lucide-react';
+
 interface Props {
   message: string;
   onUpgrade: () => void;
@@ -23,7 +25,15 @@ export function LimitReachedDialog({ message, onUpgrade, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
         style={{ padding: 28, width: 380, textAlign: 'center' }}
       >
-        <div style={{ fontSize: 32, marginBottom: 12 }}>⭐</div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <Star size={32} color="#c41930" fill="#c41930" strokeWidth={1.5} />
+        </div>
         <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Weekly limit reached</h3>
         <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5, marginBottom: 20 }}>
           {message}

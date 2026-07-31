@@ -126,6 +126,36 @@ app.get('/api/documents/:id', async (req, res) => {
 const WEEKLY_FREE_DOCUMENT_LIMIT = 10;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Read-only check so the client can know whether the weekly limit has been
+// hit WITHOUT attempting a save -- needed so opening an old document (a
+// pure read) can be gated the same way creating a new one already is,
+// instead of only discovering the limit on the next autosave tick. Mirrors
+// the exact same countCreatedSince + premium check the PUT handler below
+// uses, so the two can never disagree.
+app.get('/api/usage', async (req, res) => {
+  const deviceId = requireDeviceId(req, res);
+  if (!deviceId) return;
+
+  const userId = (req as any).userId as string | undefined;
+  const sub = userId ? await subscriptionsRepo.getByUserId(userId) : undefined;
+  const isPremium = sub?.status === 'active';
+
+  if (isPremium) {
+    return res.json({ used: 0, limit: null, limitReached: false });
+  }
+
+  const count = await documentsRepo.countCreatedSince(
+    userId ? { userId } : { deviceId },
+    Date.now() - WEEK_MS
+  );
+
+  res.json({
+    used: count,
+    limit: WEEKLY_FREE_DOCUMENT_LIMIT,
+    limitReached: count >= WEEKLY_FREE_DOCUMENT_LIMIT,
+  });
+});
+
 app.put('/api/documents/:id', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;

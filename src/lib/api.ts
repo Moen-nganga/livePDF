@@ -41,6 +41,17 @@ export interface SubscriptionInfo {
   cancelAtPeriodEnd?: boolean;
 }
 
+// Reflects the free-tier weekly document limit WITHOUT attempting a save --
+// fetched by LandingScreen so opening an old document (a pure read) can be
+// gated the same way creating a new one already is via WeeklyLimitError,
+// instead of only discovering the limit on the next autosave tick.
+// `limit` is null for premium accounts (unlimited).
+export interface UsageInfo {
+  used: number;
+  limit: number | null;
+  limitReached: boolean;
+}
+
 // Thrown specifically when the server rejects a save because of the
 // free-tier weekly document limit -- callers that create new documents
 // (LandingScreen's template/blank flow, uploads) check for this via
@@ -79,6 +90,12 @@ export const api = {
   async getDocument(id: string): Promise<PDFDocument> {
     const res = await fetch(`${API_BASE}/api/documents/${id}`, { headers: headers(), credentials: 'include' });
     if (!res.ok) throw new Error('Failed to load document');
+    return res.json();
+  },
+
+  async getUsage(): Promise<UsageInfo> {
+    const res = await fetch(`${API_BASE}/api/usage`, { headers: headers(), credentials: 'include' });
+    if (!res.ok) throw new Error('Failed to load usage');
     return res.json();
   },
 
