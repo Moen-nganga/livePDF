@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import { useSubscriptionStore } from '../store/subscriptionStore';
+import { useI18nStore } from '../store/i18nStore';
 import type { PageObject, TextObject, RectObject, ImageObject } from '../types/document';
 import { WEB_SAFE_FONTS } from '../lib/fonts';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
@@ -11,72 +12,6 @@ import { SignatureDialog } from './SignatureDialog';
 import { PremiumRequiredDialog } from './PremiumRequiredDialog';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
-
-// Scoped responsive rules for the toolbar. Inline React styles can't express
-// media queries on their own, so breakpoint-specific behavior (horizontal
-// scrolling, bigger tap targets, bottom-sheet popovers) lives here instead.
-// Rendered once as a plain <style> tag alongside the toolbar markup.
-const TOOLBAR_RESPONSIVE_CSS = `
-  .app-toolbar {
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .toolbar-hint-mobile {
-    display: none;
-  }
-
-  @media (max-width: 640px) {
-    .app-toolbar {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      overflow-y: hidden;
-      scrollbar-width: none;
-      padding: 8px 12px;
-    }
-    .app-toolbar::-webkit-scrollbar {
-      display: none;
-    }
-    .app-toolbar > button,
-    .app-toolbar > select {
-      flex-shrink: 0;
-      min-height: 40px;
-    }
-    .app-toolbar button {
-      min-width: 40px;
-    }
-    .app-toolbar select {
-      min-width: 64px;
-    }
-    .app-toolbar input[type='color'] {
-      width: 40px !important;
-      height: 40px !important;
-      flex-shrink: 0;
-    }
-
-    .toolbar-hint-desktop {
-      display: none;
-    }
-    .toolbar-hint-mobile {
-      display: inline;
-    }
-
-    /* Popovers become bottom sheets on mobile instead of tiny absolutely
-       positioned panels that can clip off the edge of a phone screen. */
-    .toolbar-popover {
-      position: fixed !important;
-      left: 50% !important;
-      top: auto !important;
-      bottom: 12px !important;
-      transform: translateX(-50%);
-      width: min(340px, calc(100vw - 24px)) !important;
-      max-height: 60vh;
-      overflow-y: auto;
-    }
-    .toolbar-popover-backdrop {
-      display: block !important;
-    }
-  }
-`;
 
 function nextOffset(count: number): { x: number; y: number } {
   const step = 24;
@@ -117,6 +52,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
   const setTextPlacementActive = useEditorStore((s) => s.setTextPlacementActive);
   const { triggerImagePick, fileInputElement } = useImageAdd();
+  const t = useI18nStore((s) => s.t);
 
   const subscription = useSubscriptionStore((s) => s.subscription);
   // Client-side gate only -- there's no server resource being consumed by
@@ -430,8 +366,6 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         flexWrap: 'wrap',
       }}
     >
-      <style>{TOOLBAR_RESPONSIVE_CSS}</style>
-
       <button
         onClick={addText}
         style={
@@ -440,20 +374,20 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
             : {}
         }
       >
-        + Text
+        {t('toolbar.addText')}
       </button>
       <button onClick={addRect} style={activeToolStyle('rect')}>
-        + Rectangle
+        {t('toolbar.addRectangle')}
       </button>
       <button onClick={addEllipse} style={activeToolStyle('ellipse')}>
-        + Ellipse
+        {t('toolbar.addEllipse')}
       </button>
       <button
         onClick={addBorder}
-        title="Add a resizable outline to frame any content"
+        title={t('toolbar.addBorderTitle')}
         style={activeToolStyle('border')}
       >
-        + Border
+        {t('toolbar.addBorder')}
       </button>
       <BorderThicknessPicker
         value={selectedBorder ? selectedBorder.strokeWidth : borderDefaults.strokeWidth}
@@ -470,19 +404,19 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         }}
       />
       <button onClick={triggerImagePick} style={activeToolStyle('image')}>
-        + Image
+        {t('toolbar.addImage')}
       </button>
 
-      <button onClick={addDate} title="Insert today's date as editable text">
-        + Date
+      <button onClick={addDate} title={t('toolbar.addDateTitle')}>
+        {t('toolbar.addDate')}
       </button>
 
       <button
         onClick={addHighlight}
-        title="Add a semi-transparent highlight overlay"
+        title={t('toolbar.addHighlightTitle')}
         style={activeToolStyle('highlight')}
       >
-        + Highlight
+        {t('toolbar.addHighlight')}
       </button>
       <HighlightColorPicker
         value={selectedHighlight ? selectedHighlight.fill ?? highlightDefaults.fill : highlightDefaults.fill}
@@ -492,18 +426,21 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         }}
       />
 
-      <button onClick={() => setWatermarkDialogOpen(true)} title="Add a diagonal watermark to the current page">
-        + Watermark
+      <button onClick={() => setWatermarkDialogOpen(true)} title={t('toolbar.addWatermarkTitle')}>
+        {t('toolbar.addWatermark')}
       </button>
 
-      <button onClick={handleSignatureClick} title={isPremium ? 'Add a signature' : 'Add a signature (Premium)'}>
-        {isPremium ? '+ Signature' : '⭐ Signature'}
+      <button
+        onClick={handleSignatureClick}
+        title={isPremium ? t('toolbar.addSignatureTitle') : t('toolbar.addSignatureTitlePremium')}
+      >
+        {isPremium ? t('toolbar.addSignature') : t('toolbar.addSignaturePremium')}
       </button>
 
       <Divider />
 
-      <button onClick={runSpellCheck} title="Check spelling across the whole document">
-        ✓ Check Spelling
+      <button onClick={runSpellCheck} title={t('toolbar.checkSpellingTitle')}>
+        {t('toolbar.checkSpelling')}
       </button>
 
       <Divider />
@@ -513,9 +450,9 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         disabled={!selectedText}
         onChange={(e) => updateSelectedText({ fontFamily: e.target.value })}
         style={{ fontFamily: selectedText?.fontFamily, minWidth: 130 }}
-        title={selectedText ? 'Font' : 'Select a text box to change its font'}
+        title={selectedText ? t('toolbar.fontTitle') : t('toolbar.fontTitleDisabled')}
       >
-        {!selectedText && <option value="">Font</option>}
+        {!selectedText && <option value="">{t('toolbar.font')}</option>}
         {WEB_SAFE_FONTS.map((font) => (
           <option key={font} value={font} style={{ fontFamily: font }}>
             {font}
@@ -533,7 +470,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
       <ToggleButton
         label="B"
-        title="Bold"
+        title={t('toolbar.bold')}
         active={!!selectedText?.bold}
         disabled={!selectedText}
         onClick={() => updateSelectedText({ bold: !selectedText?.bold })}
@@ -541,7 +478,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       />
       <ToggleButton
         label="I"
-        title="Italic"
+        title={t('toolbar.italic')}
         active={!!selectedText?.italic}
         disabled={!selectedText}
         onClick={() => updateSelectedText({ italic: !selectedText?.italic })}
@@ -549,7 +486,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       />
       <ToggleButton
         label="S"
-        title="Strikethrough"
+        title={t('toolbar.strikethrough')}
         active={!!selectedText?.strikethrough}
         disabled={!selectedText}
         onClick={() => updateSelectedText({ strikethrough: !selectedText?.strikethrough })}
@@ -571,7 +508,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       <button
         onClick={rotateSelected}
         disabled={!selectedObject}
-        title="Rotate 90°"
+        title={t('toolbar.rotate')}
         style={{ width: 28 }}
       >
         ⟳
@@ -579,10 +516,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
       <Divider />
       <span style={{ fontSize: 12, color: '#888', alignSelf: 'center', marginLeft: 8 }}>
-        <span className="toolbar-hint-desktop">
-          Double-click text to edit it · select an object and press Delete to remove it
-        </span>
-        <span className="toolbar-hint-mobile">Tap text to edit it · tap an object to select it</span>
+        {t('toolbar.hint')}
       </span>
       {fileInputElement}
       {watermarkDialogOpen && (
@@ -593,7 +527,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       )}
       {premiumPromptOpen && (
         <PremiumRequiredDialog
-          featureName="Signatures"
+          featureName={t('toolbar.signaturesFeatureName')}
           onClose={() => setPremiumPromptOpen(false)}
           onUpgrade={() => {
             setPremiumPromptOpen(false);
@@ -659,26 +593,6 @@ const COLOR_SWATCHES = [
   '#868e96',
 ];
 
-// Shared dimmed backdrop shown behind popovers once they become mobile
-// bottom sheets. Hidden by default (desktop keeps the lightweight
-// click-outside-to-close behavior); TOOLBAR_RESPONSIVE_CSS reveals it
-// under the mobile breakpoint.
-function PopoverBackdrop({ onClose }: { onClose: () => void }) {
-  return (
-    <div
-      className="toolbar-popover-backdrop"
-      onClick={onClose}
-      style={{
-        display: 'none',
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.35)',
-        zIndex: 999,
-      }}
-    />
-  );
-}
-
 function ColorPicker({
   value,
   disabled,
@@ -689,6 +603,7 @@ function ColorPicker({
   onChange: (color: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const t = useI18nStore((s) => s.t);
 
   useEffect(() => {
     if (!open) return;
@@ -705,7 +620,7 @@ function ColorPicker({
           if (!disabled) setOpen((v) => !v);
         }}
         disabled={disabled}
-        title="Text color"
+        title={t('toolbar.textColor')}
         style={{ width: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2px 0' }}
       >
         <span style={{ fontSize: 12, lineHeight: 1 }}>A</span>
@@ -720,47 +635,43 @@ function ColorPicker({
       </button>
 
       {open && (
-        <>
-          <PopoverBackdrop onClose={() => setOpen(false)} />
-          <div
-            className="toolbar-popover"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              marginTop: 4,
-              background: '#fff',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              padding: 8,
-              display: 'grid',
-              gridTemplateColumns: 'repeat(5, 1fr)',
-              gap: 6,
-            }}
-          >
-            {COLOR_SWATCHES.map((color) => (
-              <button
-                key={color}
-                title={color}
-                onClick={() => {
-                  onChange(color);
-                  setOpen(false);
-                }}
-                style={{
-                  width: 22,
-                  height: 22,
-                  background: color,
-                  border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-                  borderRadius: 4,
-                  padding: 0,
-                }}
-              />
-            ))}
-          </div>
-        </>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 8,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 6,
+          }}
+        >
+          {COLOR_SWATCHES.map((color) => (
+            <button
+              key={color}
+              title={color}
+              onClick={() => {
+                onChange(color);
+                setOpen(false);
+              }}
+              style={{
+                width: 22,
+                height: 22,
+                background: color,
+                border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                borderRadius: 4,
+                padding: 0,
+              }}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -777,6 +688,7 @@ function LinkButton({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
+  const t = useI18nStore((s) => s.t);
 
   useEffect(() => {
     if (open) setDraft(value ?? '');
@@ -809,7 +721,7 @@ function LinkButton({
           if (!disabled) setOpen((v) => !v);
         }}
         disabled={disabled}
-        title={value ? `Linked to ${value}` : 'Insert link'}
+        title={value ? t('toolbar.linkedTo', { url: value }) : t('toolbar.insertLink')}
         style={{
           width: 28,
           background: value ? 'var(--color-accent-bg)' : 'var(--color-surface)',
@@ -820,61 +732,50 @@ function LinkButton({
       </button>
 
       {open && (
-        <>
-          <PopoverBackdrop onClose={() => setOpen(false)} />
-          <div
-            className="toolbar-popover"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              marginTop: 4,
-              background: '#fff',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              padding: 10,
-              width: 240,
-            }}
-          >
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Link URL</div>
-            <input
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && apply()}
-              placeholder="example.com"
-              style={{
-                width: '100%',
-                padding: '10px 8px',
-                border: '1px solid #ccc',
-                borderRadius: 4,
-                boxSizing: 'border-box',
-                fontSize: 16, // 16px prevents iOS Safari from auto-zooming on focus
-              }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-              {value ? (
-                <button
-                  onClick={() => {
-                    onChange(undefined);
-                    setOpen(false);
-                  }}
-                  style={{ fontSize: 12, color: '#cc3333' }}
-                >
-                  Remove link
-                </button>
-              ) : (
-                <span />
-              )}
-              <button onClick={apply} style={{ fontSize: 12 }}>
-                Apply
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 10,
+            width: 240,
+          }}
+        >
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>{t('toolbar.linkUrl')}</div>
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && apply()}
+            placeholder={t('toolbar.linkPlaceholder')}
+            style={{ width: '100%', padding: '6px 8px', border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+            {value ? (
+              <button
+                onClick={() => {
+                  onChange(undefined);
+                  setOpen(false);
+                }}
+                style={{ fontSize: 12, color: '#cc3333' }}
+              >
+                {t('toolbar.removeLink')}
               </button>
-            </div>
+            ) : (
+              <span />
+            )}
+            <button onClick={apply} style={{ fontSize: 12 }}>
+              {t('toolbar.apply')}
+            </button>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -890,6 +791,7 @@ function BorderThicknessPicker({
   onChange: (thickness: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const t = useI18nStore((s) => s.t);
 
   useEffect(() => {
     if (!open) return;
@@ -905,56 +807,52 @@ function BorderThicknessPicker({
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        title="Border thickness"
+        title={t('toolbar.borderThickness')}
         style={{ width: 28 }}
       >
         ▾
       </button>
 
       {open && (
-        <>
-          <PopoverBackdrop onClose={() => setOpen(false)} />
-          <div
-            className="toolbar-popover"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              marginTop: 4,
-              background: '#fff',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              padding: 6,
-              width: 140,
-            }}
-          >
-            {BORDER_THICKNESSES.map((thickness) => (
-              <button
-                key={thickness}
-                onClick={() => {
-                  onChange(thickness);
-                  setOpen(false);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  width: '100%',
-                  padding: '10px 8px',
-                  border: thickness === value ? '1px solid var(--color-accent)' : '1px solid transparent',
-                  background: thickness === value ? '#eef6ff' : 'transparent',
-                  borderRadius: 4,
-                }}
-              >
-                <div style={{ flex: 1, height: thickness, background: '#222' }} />
-                <span style={{ fontSize: 11, color: '#888' }}>{thickness}px</span>
-              </button>
-            ))}
-          </div>
-        </>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 6,
+            width: 140,
+          }}
+        >
+          {BORDER_THICKNESSES.map((thickness) => (
+            <button
+              key={thickness}
+              onClick={() => {
+                onChange(thickness);
+                setOpen(false);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                width: '100%',
+                padding: '6px 8px',
+                border: thickness === value ? '1px solid var(--color-accent)' : '1px solid transparent',
+                background: thickness === value ? '#eef6ff' : 'transparent',
+                borderRadius: 4,
+              }}
+            >
+              <div style={{ flex: 1, height: thickness, background: '#222' }} />
+              <span style={{ fontSize: 11, color: '#888' }}>{thickness}px</span>
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -968,6 +866,7 @@ function BorderColorPicker({
   onChange: (color: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const t = useI18nStore((s) => s.t);
 
   useEffect(() => {
     if (!open) return;
@@ -983,7 +882,7 @@ function BorderColorPicker({
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        title="Border color"
+        title={t('toolbar.borderColor')}
         style={{ width: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2px 0' }}
       >
         <span
@@ -998,47 +897,43 @@ function BorderColorPicker({
       </button>
 
       {open && (
-        <>
-          <PopoverBackdrop onClose={() => setOpen(false)} />
-          <div
-            className="toolbar-popover"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              marginTop: 4,
-              background: '#fff',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              padding: 8,
-              display: 'grid',
-              gridTemplateColumns: 'repeat(5, 1fr)',
-              gap: 6,
-            }}
-          >
-            {COLOR_SWATCHES.map((color) => (
-              <button
-                key={color}
-                title={color}
-                onClick={() => {
-                  onChange(color);
-                  setOpen(false);
-                }}
-                style={{
-                  width: 22,
-                  height: 22,
-                  background: color,
-                  border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-                  borderRadius: 4,
-                  padding: 0,
-                }}
-              />
-            ))}
-          </div>
-        </>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 8,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 6,
+          }}
+        >
+          {COLOR_SWATCHES.map((color) => (
+            <button
+              key={color}
+              title={color}
+              onClick={() => {
+                onChange(color);
+                setOpen(false);
+              }}
+              style={{
+                width: 22,
+                height: 22,
+                background: color,
+                border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                borderRadius: 4,
+                padding: 0,
+              }}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -1055,12 +950,13 @@ function HighlightColorPicker({
   value: string;
   onChange: (color: string) => void;
 }) {
+  const t = useI18nStore((s) => s.t);
   return (
     <input
       type="color"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      title="Highlight color — pick any color"
+      title={t('toolbar.highlightColor')}
       style={{
         width: 28,
         height: 28,
@@ -1081,6 +977,7 @@ function WatermarkDialog({
   onInsert: (text: string) => void;
   onClose: () => void;
 }) {
+  const t = useI18nStore((s) => s.t);
   const [text, setText] = useState('CONFIDENTIAL');
 
   return (
@@ -1094,27 +991,22 @@ function WatermarkDialog({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 2000,
-        padding: 16,
-        boxSizing: 'border-box',
       }}
     >
       <div
         className="surface-card"
         onClick={(e) => e.stopPropagation()}
-        style={{ padding: 24, width: 'min(360px, 92vw)', boxSizing: 'border-box' }}
+        style={{ padding: 24, width: 360 }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Add watermark</h3>
-          <button
-            onClick={onClose}
-            style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', padding: 8 }}
-          >
+          <h3 style={{ margin: 0, fontSize: 16 }}>{t('toolbar.watermarkDialogTitle')}</h3>
+          <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 16, cursor: 'pointer' }}>
             ✕
           </button>
         </div>
 
         <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: '#666' }}>
-          Watermark text
+          {t('toolbar.watermarkTextLabel')}
         </label>
         <input
           autoFocus
@@ -1124,30 +1016,22 @@ function WatermarkDialog({
           onKeyDown={(e) => e.key === 'Enter' && text.trim() && onInsert(text)}
           style={{
             width: '100%',
-            padding: '10px 10px',
+            padding: '8px 10px',
             border: '1px solid #ccc',
             borderRadius: 4,
-            fontSize: 16, // 16px prevents iOS Safari from auto-zooming on focus
+            fontSize: 14,
             boxSizing: 'border-box',
           }}
         />
 
         <p style={{ fontSize: 12, color: '#888', marginTop: 10 }}>
-          Added as a large, faint, diagonal overlay across the current page only. It's a normal
-          text object afterward — you can move, resize, restyle, or delete it like anything else.
+          {t('toolbar.watermarkDescription')}
         </p>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button onClick={onClose} style={{ padding: '10px 14px' }}>
-            Cancel
-          </button>
-          <button
-            className="btn-accent"
-            onClick={() => onInsert(text)}
-            disabled={!text.trim()}
-            style={{ padding: '10px 14px' }}
-          >
-            Insert watermark
+          <button onClick={onClose}>{t('common.cancel')}</button>
+          <button className="btn-accent" onClick={() => onInsert(text)} disabled={!text.trim()}>
+            {t('toolbar.insertWatermark')}
           </button>
         </div>
       </div>
@@ -1169,17 +1053,18 @@ interface FontSizeDropdownProps {
 }
 
 function FontSizeDropdown({ value, disabled, onChange }: FontSizeDropdownProps) {
+  const t = useI18nStore((s) => s.t);
   return (
     <select
       value={value ?? ''}
       disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
-      title={disabled ? 'Select a text box to change its font size' : 'Font size'}
+      title={disabled ? t('toolbar.fontSizeTitleDisabled') : t('toolbar.fontSizeTitle')}
       style={{ width: 56 }}
     >
       {(!value || !FONT_SIZE_OPTIONS.includes(value)) && (
         <option value="" disabled hidden>
-          {value ?? 'Size'}
+          {value ?? t('toolbar.fontSize')}
         </option>
       )}
       {FONT_SIZE_OPTIONS.map((size) => (

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useEditorStore } from '../store/editorStore';
+import { useI18nStore } from '../store/i18nStore';
 
 const MENU_ID = 'edit';
 
@@ -13,6 +14,7 @@ export function EditMenu() {
   const openMenuId = useEditorStore((s) => s.openMenuId);
   const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
   const open = openMenuId === MENU_ID;
+  const t = useI18nStore((s) => s.t);
 
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
@@ -91,7 +93,7 @@ export function EditMenu() {
         className={open ? 'tool-active' : undefined}
         onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}
       >
-        Edit
+        {t('editMenu.edit')}
       </button>
 
       {open && (
@@ -109,10 +111,10 @@ export function EditMenu() {
             overflow: 'hidden',
           }}
         >
-          <MenuItem label="Undo" shortcut="Ctrl+Z" onClick={handleUndo} disabled={!canUndo()} />
-          <MenuItem label="Redo" shortcut="Ctrl+Y" onClick={handleRedo} disabled={!canRedo()} />
+          <MenuItem label={t('editMenu.undo')} shortcut="Ctrl+Z" onClick={handleUndo} disabled={!canUndo()} />
+          <MenuItem label={t('editMenu.redo')} shortcut="Ctrl+Y" onClick={handleRedo} disabled={!canRedo()} />
           <Divider />
-          <MenuItem label="Delete" onClick={handleDelete} disabled={!hasSelection} danger />
+          <MenuItem label={t('editMenu.delete')} onClick={handleDelete} disabled={!hasSelection} danger />
         </div>
       )}
     </div>

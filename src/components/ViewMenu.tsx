@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from '../store/editorStore';
+import { useI18nStore } from '../store/i18nStore';
 
 const MENU_ID = 'view';
 
@@ -20,6 +21,7 @@ export function ViewMenu() {
   const openMenuId = useEditorStore((s) => s.openMenuId);
   const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
   const open = openMenuId === MENU_ID;
+  const t = useI18nStore((s) => s.t);
 
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
 
@@ -106,7 +108,7 @@ export function ViewMenu() {
         className={open ? 'tool-active' : undefined}
         onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}
       >
-        View
+        {t('viewMenu.view')}
       </button>
 
       {open && (
@@ -125,7 +127,7 @@ export function ViewMenu() {
           }}
         >
           <MenuItem
-            label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+            label={isFullscreen ? t('viewMenu.exitFullScreen') : t('viewMenu.fullScreen')}
             shortcut="F11"
             onClick={handleToggleFullscreen}
             checked={isFullscreen}
@@ -133,13 +135,13 @@ export function ViewMenu() {
           <Divider />
           {isOwner && (
             <MenuItem
-              label="Show page sidebar"
+              label={t('viewMenu.showPageSidebar')}
               onClick={handleTogglePageSidebar}
               checked={!isPageNavCollapsed}
             />
           )}
-          <MenuItem label="Show ruler" onClick={handleToggleRuler} checked={showRuler} />
-          <MenuItem label="Show comments" onClick={handleToggleComments} checked={showComments} />
+          <MenuItem label={t('viewMenu.showRuler')} onClick={handleToggleRuler} checked={showRuler} />
+          <MenuItem label={t('viewMenu.showComments')} onClick={handleToggleComments} checked={showComments} />
         </div>
       )}
     </div>

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useEditorStore } from '../store/editorStore';
+import { useI18nStore } from '../store/i18nStore';
 
 const MENU_ID = 'help';
 
@@ -13,6 +14,7 @@ export function HelpMenu() {
   const openMenuId = useEditorStore((s) => s.openMenuId);
   const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
   const open = openMenuId === MENU_ID;
+  const t = useI18nStore((s) => s.t);
 
   useEffect(() => {
     if (!open) return;
@@ -44,7 +46,7 @@ export function HelpMenu() {
         className={open ? 'tool-active' : undefined}
         onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}
       >
-        Help
+        {t('helpMenu.help')}
       </button>
 
       {open && (
@@ -62,10 +64,10 @@ export function HelpMenu() {
             overflow: 'hidden',
           }}
         >
-          <MenuItem label="Help" onClick={() => openPage('/legal/help.html')} />
+          <MenuItem label={t('helpMenu.help')} onClick={() => openPage('/legal/help.html')} />
           <Divider />
-          <MenuItem label="Privacy Policy" onClick={() => openPage('/legal/privacy.html')} />
-          <MenuItem label="Terms of Service" onClick={() => openPage('/legal/terms.html')} />
+          <MenuItem label={t('helpMenu.privacyPolicy')} onClick={() => openPage('/legal/privacy.html')} />
+          <MenuItem label={t('helpMenu.termsOfService')} onClick={() => openPage('/legal/terms.html')} />
         </div>
       )}
     </div>

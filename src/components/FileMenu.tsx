@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useEditorStore } from '../store/editorStore';
+import { useI18nStore } from '../store/i18nStore';
 import { api } from '../lib/api';
 import { ShareDialog } from './ShareDialog';
 import { NewDocumentDialog } from './NewDocumentDialog';
@@ -17,6 +18,7 @@ export function FileMenu() {
   const openMenuId = useEditorStore((s) => s.openMenuId);
   const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
   const open = openMenuId === MENU_ID;
+  const t = useI18nStore((s) => s.t);
 
   const [shareOpen, setShareOpen] = useState(false);
   const [newDocOpen, setNewDocOpen] = useState(false);
@@ -66,15 +68,13 @@ export function FileMenu() {
   async function handleDelete() {
     setOpenMenuId(null);
     if (!document) return;
-    const ok = confirm(
-      `Delete "${document.title}"? This cannot be undone.`
-    );
+    const ok = confirm(t('fileMenu.deleteConfirm', { title: document.title }));
     if (!ok) return;
 
     try {
       await api.deleteDocument(document.id);
     } catch {
-      alert('Could not delete the document — check your connection and try again.');
+      alert(t('fileMenu.deleteError'));
       return;
     }
     // After deleting, there's nothing left to show, so start fresh —
@@ -101,7 +101,7 @@ export function FileMenu() {
         className={open ? 'tool-active' : undefined}
         onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}
       >
-        File
+        {t('fileMenu.file')}
       </button>
 
       {open && (
@@ -122,13 +122,13 @@ export function FileMenu() {
             overflow: 'hidden',
           }}
         >
-          <MenuItem label="New" onClick={handleNew} />
-          <MenuItem label="Make a copy" onClick={handleMakeACopy} />
+          <MenuItem label={t('fileMenu.new')} onClick={handleNew} />
+          <MenuItem label={t('fileMenu.makeACopy')} onClick={handleMakeACopy} />
           <Divider />
-          <MenuItem label="Rename" onClick={handleRename} />
-          <MenuItem label="Share" onClick={handleShare} />
+          <MenuItem label={t('fileMenu.rename')} onClick={handleRename} />
+          <MenuItem label={t('fileMenu.share')} onClick={handleShare} />
           <Divider />
-          <MenuItem label="Delete" onClick={handleDelete} danger />
+          <MenuItem label={t('fileMenu.delete')} onClick={handleDelete} danger />
         </div>
       )}
 

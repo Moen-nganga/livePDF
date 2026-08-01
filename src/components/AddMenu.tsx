@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
+import { useI18nStore } from '../store/i18nStore';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 import type { PageObject } from '../types/document';
 
@@ -10,6 +11,7 @@ export function AddMenu() {
   const openMenuId = useEditorStore((s) => s.openMenuId);
   const setOpenMenuId = useEditorStore((s) => s.setOpenMenuId);
   const open = openMenuId === MENU_ID;
+  const t = useI18nStore((s) => s.t);
 
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const { triggerImagePick, fileInputElement } = useImageAdd();
@@ -50,7 +52,7 @@ export function AddMenu() {
           className={open ? 'tool-active' : undefined}
           onClick={(e) => { e.stopPropagation(); setOpenMenuId(open ? null : MENU_ID); }}
         >
-          Add
+          {t('addMenu.add')}
         </button>
 
         {open && (
@@ -69,14 +71,14 @@ export function AddMenu() {
             }}
           >
             <MenuItem
-              label="Image"
-              description="Add an image to the page"
+              label={t('addMenu.image')}
+              description={t('addMenu.imageDescription')}
               icon="🖼"
               onClick={handleImage}
             />
             <MenuItem
-              label="Table"
-              description="Insert a rows × columns grid"
+              label={t('addMenu.table')}
+              description={t('addMenu.tableDescription')}
               icon="⊞"
               onClick={handleTable}
             />
@@ -134,6 +136,7 @@ function MenuItem({
 }
 
 function TableDialog({ onClose }: { onClose: () => void }) {
+  const t = useI18nStore((s) => s.t);
   const [rows, setRows] = useState(3);
   const [cols, setCols] = useState(3);
   const [hasHeader, setHasHeader] = useState(true);
@@ -146,8 +149,8 @@ function TableDialog({ onClose }: { onClose: () => void }) {
   const activePage = document?.pages[activePageIndex];
 
   function validate(r: number, c: number) {
-    if (r < 1 || r > 20) return 'Rows must be between 1 and 20';
-    if (c < 1 || c > 10) return 'Columns must be between 1 and 10';
+    if (r < 1 || r > 20) return t('addMenu.rowsError');
+    if (c < 1 || c > 10) return t('addMenu.colsError');
     return '';
   }
 
@@ -207,7 +210,7 @@ function TableDialog({ onClose }: { onClose: () => void }) {
           height: rowH,
           rotation: 0,
           opacity: 1,
-          text: isHeader ? `Column ${c + 1}` : '',
+          text: isHeader ? t('addMenu.columnLabel', { n: c + 1 }) : '',
           fontSize: 11,
           fontFamily: 'Helvetica',
           color: isHeader ? '#ffffff' : '#202124',
@@ -245,7 +248,7 @@ function TableDialog({ onClose }: { onClose: () => void }) {
         style={{ padding: 24, width: 380 }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Insert table</h3>
+          <h3 style={{ margin: 0, fontSize: 16 }}>{t('addMenu.insertTableTitle')}</h3>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 16, cursor: 'pointer' }}>✕</button>
         </div>
 
@@ -276,7 +279,7 @@ function TableDialog({ onClose }: { onClose: () => void }) {
         {/* Controls */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-            Rows
+            {t('addMenu.rows')}
             <input
               type="number"
               min={1} max={20}
@@ -286,7 +289,7 @@ function TableDialog({ onClose }: { onClose: () => void }) {
             />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-            Columns
+            {t('addMenu.columns')}
             <input
               type="number"
               min={1} max={10}
@@ -306,7 +309,7 @@ function TableDialog({ onClose }: { onClose: () => void }) {
             checked={hasHeader}
             onChange={(e) => setHasHeader(e.target.checked)}
           />
-          Style first row as a header
+          {t('addMenu.headerRow')}
         </label>
 
         {error && (
@@ -314,8 +317,8 @@ function TableDialog({ onClose }: { onClose: () => void }) {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose}>Cancel</button>
-          <button className="btn-accent" onClick={handleInsert}>Insert table</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
+          <button className="btn-accent" onClick={handleInsert}>{t('addMenu.insertTable')}</button>
         </div>
       </div>
     </div>
