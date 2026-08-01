@@ -76,7 +76,7 @@ const FAQ_GROUPS: FaqGroup[] = [
       },
       {
         q: 'What payment methods are supported?',
-        a: 'We support card payments via Stripe and crypto payments via Binance Pay.',
+        a: 'We support card payments via Stripe.',
       },
     ],
   },

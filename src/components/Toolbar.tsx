@@ -12,6 +12,72 @@ import { PremiumRequiredDialog } from './PremiumRequiredDialog';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
+// Scoped responsive rules for the toolbar. Inline React styles can't express
+// media queries on their own, so breakpoint-specific behavior (horizontal
+// scrolling, bigger tap targets, bottom-sheet popovers) lives here instead.
+// Rendered once as a plain <style> tag alongside the toolbar markup.
+const TOOLBAR_RESPONSIVE_CSS = `
+  .app-toolbar {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .toolbar-hint-mobile {
+    display: none;
+  }
+
+  @media (max-width: 640px) {
+    .app-toolbar {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      padding: 8px 12px;
+    }
+    .app-toolbar::-webkit-scrollbar {
+      display: none;
+    }
+    .app-toolbar > button,
+    .app-toolbar > select {
+      flex-shrink: 0;
+      min-height: 40px;
+    }
+    .app-toolbar button {
+      min-width: 40px;
+    }
+    .app-toolbar select {
+      min-width: 64px;
+    }
+    .app-toolbar input[type='color'] {
+      width: 40px !important;
+      height: 40px !important;
+      flex-shrink: 0;
+    }
+
+    .toolbar-hint-desktop {
+      display: none;
+    }
+    .toolbar-hint-mobile {
+      display: inline;
+    }
+
+    /* Popovers become bottom sheets on mobile instead of tiny absolutely
+       positioned panels that can clip off the edge of a phone screen. */
+    .toolbar-popover {
+      position: fixed !important;
+      left: 50% !important;
+      top: auto !important;
+      bottom: 12px !important;
+      transform: translateX(-50%);
+      width: min(340px, calc(100vw - 24px)) !important;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    .toolbar-popover-backdrop {
+      display: block !important;
+    }
+  }
+`;
+
 function nextOffset(count: number): { x: number; y: number } {
   const step = 24;
   return { x: 80 + (count % 8) * step, y: 80 + (count % 8) * step };
@@ -364,6 +430,8 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         flexWrap: 'wrap',
       }}
     >
+      <style>{TOOLBAR_RESPONSIVE_CSS}</style>
+
       <button
         onClick={addText}
         style={
@@ -511,7 +579,10 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
       <Divider />
       <span style={{ fontSize: 12, color: '#888', alignSelf: 'center', marginLeft: 8 }}>
-        Double-click text to edit it · select an object and press Delete to remove it
+        <span className="toolbar-hint-desktop">
+          Double-click text to edit it · select an object and press Delete to remove it
+        </span>
+        <span className="toolbar-hint-mobile">Tap text to edit it · tap an object to select it</span>
       </span>
       {fileInputElement}
       {watermarkDialogOpen && (
@@ -588,6 +659,26 @@ const COLOR_SWATCHES = [
   '#868e96',
 ];
 
+// Shared dimmed backdrop shown behind popovers once they become mobile
+// bottom sheets. Hidden by default (desktop keeps the lightweight
+// click-outside-to-close behavior); TOOLBAR_RESPONSIVE_CSS reveals it
+// under the mobile breakpoint.
+function PopoverBackdrop({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="toolbar-popover-backdrop"
+      onClick={onClose}
+      style={{
+        display: 'none',
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.35)',
+        zIndex: 999,
+      }}
+    />
+  );
+}
+
 function ColorPicker({
   value,
   disabled,
@@ -629,43 +720,47 @@ function ColorPicker({
       </button>
 
       {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            background: '#fff',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-            zIndex: 1000,
-            padding: 8,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: 6,
-          }}
-        >
-          {COLOR_SWATCHES.map((color) => (
-            <button
-              key={color}
-              title={color}
-              onClick={() => {
-                onChange(color);
-                setOpen(false);
-              }}
-              style={{
-                width: 22,
-                height: 22,
-                background: color,
-                border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-                borderRadius: 4,
-                padding: 0,
-              }}
-            />
-          ))}
-        </div>
+        <>
+          <PopoverBackdrop onClose={() => setOpen(false)} />
+          <div
+            className="toolbar-popover"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 4,
+              background: '#fff',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              padding: 8,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, 1fr)',
+              gap: 6,
+            }}
+          >
+            {COLOR_SWATCHES.map((color) => (
+              <button
+                key={color}
+                title={color}
+                onClick={() => {
+                  onChange(color);
+                  setOpen(false);
+                }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  background: color,
+                  border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                  borderRadius: 4,
+                  padding: 0,
+                }}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -725,50 +820,61 @@ function LinkButton({
       </button>
 
       {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            background: '#fff',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-            zIndex: 1000,
-            padding: 10,
-            width: 240,
-          }}
-        >
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Link URL</div>
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && apply()}
-            placeholder="example.com"
-            style={{ width: '100%', padding: '6px 8px', border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-            {value ? (
-              <button
-                onClick={() => {
-                  onChange(undefined);
-                  setOpen(false);
-                }}
-                style={{ fontSize: 12, color: '#cc3333' }}
-              >
-                Remove link
+        <>
+          <PopoverBackdrop onClose={() => setOpen(false)} />
+          <div
+            className="toolbar-popover"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 4,
+              background: '#fff',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              padding: 10,
+              width: 240,
+            }}
+          >
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Link URL</div>
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && apply()}
+              placeholder="example.com"
+              style={{
+                width: '100%',
+                padding: '10px 8px',
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                boxSizing: 'border-box',
+                fontSize: 16, // 16px prevents iOS Safari from auto-zooming on focus
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+              {value ? (
+                <button
+                  onClick={() => {
+                    onChange(undefined);
+                    setOpen(false);
+                  }}
+                  style={{ fontSize: 12, color: '#cc3333' }}
+                >
+                  Remove link
+                </button>
+              ) : (
+                <span />
+              )}
+              <button onClick={apply} style={{ fontSize: 12 }}>
+                Apply
               </button>
-            ) : (
-              <span />
-            )}
-            <button onClick={apply} style={{ fontSize: 12 }}>
-              Apply
-            </button>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -806,45 +912,49 @@ function BorderThicknessPicker({
       </button>
 
       {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            background: '#fff',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-            zIndex: 1000,
-            padding: 6,
-            width: 140,
-          }}
-        >
-          {BORDER_THICKNESSES.map((thickness) => (
-            <button
-              key={thickness}
-              onClick={() => {
-                onChange(thickness);
-                setOpen(false);
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                width: '100%',
-                padding: '6px 8px',
-                border: thickness === value ? '1px solid var(--color-accent)' : '1px solid transparent',
-                background: thickness === value ? '#eef6ff' : 'transparent',
-                borderRadius: 4,
-              }}
-            >
-              <div style={{ flex: 1, height: thickness, background: '#222' }} />
-              <span style={{ fontSize: 11, color: '#888' }}>{thickness}px</span>
-            </button>
-          ))}
-        </div>
+        <>
+          <PopoverBackdrop onClose={() => setOpen(false)} />
+          <div
+            className="toolbar-popover"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 4,
+              background: '#fff',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              padding: 6,
+              width: 140,
+            }}
+          >
+            {BORDER_THICKNESSES.map((thickness) => (
+              <button
+                key={thickness}
+                onClick={() => {
+                  onChange(thickness);
+                  setOpen(false);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  padding: '10px 8px',
+                  border: thickness === value ? '1px solid var(--color-accent)' : '1px solid transparent',
+                  background: thickness === value ? '#eef6ff' : 'transparent',
+                  borderRadius: 4,
+                }}
+              >
+                <div style={{ flex: 1, height: thickness, background: '#222' }} />
+                <span style={{ fontSize: 11, color: '#888' }}>{thickness}px</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -888,43 +998,47 @@ function BorderColorPicker({
       </button>
 
       {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            background: '#fff',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-            zIndex: 1000,
-            padding: 8,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: 6,
-          }}
-        >
-          {COLOR_SWATCHES.map((color) => (
-            <button
-              key={color}
-              title={color}
-              onClick={() => {
-                onChange(color);
-                setOpen(false);
-              }}
-              style={{
-                width: 22,
-                height: 22,
-                background: color,
-                border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-                borderRadius: 4,
-                padding: 0,
-              }}
-            />
-          ))}
-        </div>
+        <>
+          <PopoverBackdrop onClose={() => setOpen(false)} />
+          <div
+            className="toolbar-popover"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 4,
+              background: '#fff',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              padding: 8,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, 1fr)',
+              gap: 6,
+            }}
+          >
+            {COLOR_SWATCHES.map((color) => (
+              <button
+                key={color}
+                title={color}
+                onClick={() => {
+                  onChange(color);
+                  setOpen(false);
+                }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  background: color,
+                  border: color === value ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                  borderRadius: 4,
+                  padding: 0,
+                }}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -980,16 +1094,21 @@ function WatermarkDialog({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 2000,
+        padding: 16,
+        boxSizing: 'border-box',
       }}
     >
       <div
         className="surface-card"
         onClick={(e) => e.stopPropagation()}
-        style={{ padding: 24, width: 360 }}
+        style={{ padding: 24, width: 'min(360px, 92vw)', boxSizing: 'border-box' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h3 style={{ margin: 0, fontSize: 16 }}>Add watermark</h3>
-          <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 16, cursor: 'pointer' }}>
+          <button
+            onClick={onClose}
+            style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', padding: 8 }}
+          >
             ✕
           </button>
         </div>
@@ -1005,10 +1124,10 @@ function WatermarkDialog({
           onKeyDown={(e) => e.key === 'Enter' && text.trim() && onInsert(text)}
           style={{
             width: '100%',
-            padding: '8px 10px',
+            padding: '10px 10px',
             border: '1px solid #ccc',
             borderRadius: 4,
-            fontSize: 14,
+            fontSize: 16, // 16px prevents iOS Safari from auto-zooming on focus
             boxSizing: 'border-box',
           }}
         />
@@ -1019,8 +1138,15 @@ function WatermarkDialog({
         </p>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button onClick={onClose}>Cancel</button>
-          <button className="btn-accent" onClick={() => onInsert(text)} disabled={!text.trim()}>
+          <button onClick={onClose} style={{ padding: '10px 14px' }}>
+            Cancel
+          </button>
+          <button
+            className="btn-accent"
+            onClick={() => onInsert(text)}
+            disabled={!text.trim()}
+            style={{ padding: '10px 14px' }}
+          >
             Insert watermark
           </button>
         </div>

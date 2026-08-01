@@ -40,6 +40,49 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     canvas.skipTargetFind = readOnly;
     fabricRef.current = canvas;
 
+    // Fits the canvas to whatever width is actually available (the page's
+    // parent container -- typically App.tsx's <main className=
+    // "app-canvas-area">) rather than always rendering at the PDF's real
+    // point size. On a phone that real size (e.g. ~612px for Letter) is
+    // wider than the whole viewport, which is what was pushing the canvas
+    // off-screen with a blank gap next to it in the mobile screenshot.
+    //
+    // This uses Fabric's viewport zoom (canvas.setZoom), NOT a change to
+    // stored coordinates -- every object's x/y/width/height in the store,
+    // and everywhere else that reads them (autosave, PDF export, the
+    // spellchecker, drag/resize math via object:modified above), stays in
+    // real PDF points the whole time. Only the on-screen pixel size
+    // changes. Mouse handlers already convert screen coordinates to scene
+    // coordinates via canvas.getScenePoint, which accounts for zoom
+    // automatically, so text placement etc. keep working unmodified.
+    //
+    // `container` is resolved to a definite (non-null) Element right here,
+    // once, rather than referencing `wrapper.parentElement ?? wrapper`
+    // inline inside fitToContainer/resizeObserver below -- TypeScript
+    // stops trusting the `if (!wrapper) return` null-check for `wrapper`
+    // itself once it's read inside a nested closure, so capturing an
+    // already-non-null `container` instead sidesteps that entirely.
+    const container: Element = wrapper.parentElement ?? wrapper;
+
+    function fitToContainer() {
+      const style = window.getComputedStyle(container);
+      const paddingX = parseFloat(style.paddingLeft || '0') + parseFloat(style.paddingRight || '0');
+      const available = container.clientWidth - paddingX;
+      if (available <= 0) return;
+
+      // Never upscale past the PDF's real size -- only shrink to fit a
+      // narrow screen, so desktop keeps rendering at its native 1:1 size.
+      const scale = Math.min(1, available / page.width);
+      canvas.setDimensions({ width: page.width * scale, height: page.height * scale });
+      canvas.setZoom(scale);
+      canvas.requestRenderAll();
+    }
+
+    fitToContainer();
+
+    const resizeObserver = new ResizeObserver(() => fitToContainer());
+    resizeObserver.observe(container);
+
     canvas.on('selection:created', (e) => {
       const obj = e.selected?.[0] as (fabric.Object & { id?: string }) | undefined;
       setSelectedObjectId(obj?.id ?? null);
@@ -147,6 +190,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     });
 
     return () => {
+      resizeObserver.disconnect();
       canvas.dispose();
       fabricRef.current = null;
       wrapper.innerHTML = '';

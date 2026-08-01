@@ -17,6 +17,27 @@ interface PageNavProps {
   onRequirePremium?: () => void;
 }
 
+// Tracks whether the viewport is at or below a "mobile" breakpoint, kept in
+// sync via a matchMedia listener (covers resize/rotation, not just the
+// size at mount). Same 640px threshold and pattern used elsewhere
+// (LandingScreen) -- duplicated locally rather than shared since there's
+// no existing utils module to put it in yet.
+function useIsMobile(breakpoint = 640): boolean {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
+  );
+
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const onChange = () => setIsMobile(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
 export function PageNav({ onRequirePremium }: PageNavProps) {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
@@ -25,6 +46,10 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
   const removePage = useEditorStore((s) => s.removePage);
   const duplicatePage = useEditorStore((s) => s.duplicatePage);
   const renamePage = useEditorStore((s) => s.renamePage);
+  const isCollapsed = useEditorStore((s) => s.isPageNavCollapsed);
+  const setIsCollapsed = useEditorStore((s) => s.setIsPageNavCollapsed);
+
+  const isMobile = useIsMobile();
 
   const subscription = useSubscriptionStore((s) => s.subscription);
   // Client-side gate only, same caveat as Toolbar's signature gating and
@@ -105,19 +130,76 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
     setMenu(null);
   }
 
+  // Collapsed to a thin strip -- most useful on mobile, where the sidebar's
+  // own width is real estate taken directly from the canvas, but left
+  // available on desktop too via the same toggle for anyone who wants the
+  // extra room. Nothing about page state is lost while collapsed; this is
+  // purely a view toggle (isPageNavCollapsed already lives in the store as
+  // transient view state, same category as showRuler/showComments).
+  if (isCollapsed) {
+    return (
+      <button
+        onClick={() => setIsCollapsed(false)}
+        title="Show pages"
+        aria-label="Show pages"
+        style={{
+          width: 20,
+          alignSelf: 'stretch',
+          border: 'none',
+          borderRight: '1.5px solid var(--color-sidebar-border)',
+          background: 'var(--color-surface)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          flexShrink: 0,
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M3 1.5L7 5L3 8.5" stroke="var(--color-text-muted)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    );
+  }
+
   return (
     <aside
       className="app-sidebar"
       style={{
-        width: 152,
-        padding: 12,
+        width: isMobile ? 100 : 152,
+        flexShrink: 0,
+        padding: isMobile ? 8 : 12,
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
+        gap: isMobile ? 6 : 8,
         overflowY: 'auto',
         position: 'relative',
       }}
     >
+      {/* Collapse toggle -- tucked at the top so it doesn't cost its own
+          row of vertical space beyond what the page list already uses. */}
+      <button
+        onClick={() => setIsCollapsed(true)}
+        title="Hide pages"
+        aria-label="Hide pages"
+        style={{
+          alignSelf: 'flex-end',
+          width: 22,
+          height: 22,
+          padding: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          border: 'none',
+          background: 'transparent',
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M7 1.5L3 5L7 8.5" stroke="var(--color-text-muted)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
       {document.pages.map((page, i) => (
         <div key={page.id}>
           {renamingId === page.id ? (
@@ -132,8 +214,8 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
               }}
               style={{
                 width: '100%',
-                padding: 8,
-                fontSize: 12,
+                padding: isMobile ? 6 : 8,
+                fontSize: isMobile ? 11 : 12,
                 border: '2px solid var(--color-accent)',
                 boxSizing: 'border-box',
               }}
@@ -147,14 +229,19 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
                 setMenu({ pageId: page.id, x: e.clientX, y: e.clientY });
               }}
               onDoubleClick={() => startRename(page, i)}
+              title={labelFor(page, i)}
               style={{
                 width: '100%',
                 border: i === activePageIndex ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
                 background: '#fff',
-                padding: 8,
-                fontSize: 12,
+                padding: isMobile ? 6 : 8,
+                fontSize: isMobile ? 11 : 12,
                 cursor: 'pointer',
                 boxSizing: 'border-box',
+                display: 'block',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
               {labelFor(page, i)}
@@ -166,9 +253,19 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
       <button
         onClick={handleAddPage}
         title={atPageLimit ? `Free plan limit: ${FREE_PAGE_LIMIT} pages — upgrade for unlimited pages` : undefined}
-        style={{ fontSize: 12 }}
+        style={{
+          fontSize: isMobile ? 11 : 12,
+          padding: isMobile ? '6px 4px' : undefined,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
       >
-        {atPageLimit ? `⭐ Add page (${pageCount}/${FREE_PAGE_LIMIT})` : '+ Add page'}
+        {atPageLimit
+          ? isMobile
+            ? `⭐ ${pageCount}/${FREE_PAGE_LIMIT}`
+            : `⭐ Add page (${pageCount}/${FREE_PAGE_LIMIT})`
+          : '+ Add page'}
       </button>
 
       {menu && (

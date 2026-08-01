@@ -19,11 +19,34 @@ interface Props {
   onEnter: () => void;
 }
 
+// Tracks whether the viewport is at or below a "mobile" breakpoint, kept in
+// sync via a matchMedia listener rather than measured once on mount --
+// covers both phones (fixed width) and desktop windows being resized/
+// rotated devices. 640px matches the point at which the fixed-column
+// recent-documents table and multi-item header row stop having room to
+// breathe.
+function useIsMobile(breakpoint = 640): boolean {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
+  );
+
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const onChange = () => setIsMobile(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
 export function LandingScreen({ onEnter }: Props) {
   const loadDocument = useEditorStore((s) => s.loadDocument);
   const [recent, setRecent] = useState<DocumentSummary[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
   const [creating, setCreating] = useState<string | null>(null);
+  const isMobile = useIsMobile();
 
   const authUser = useAuthStore((s) => s.user);
   const authStatus = useAuthStore((s) => s.status);
@@ -111,12 +134,12 @@ export function LandingScreen({ onEnter }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stripe/Binance both redirect back to APP_URL root after checkout (see
-  // success_url/returnUrl in stripe.ts and binancePay.ts), landing here as
-  // ?upgraded=stripe|binance. There's no guarantee the webhook has already
-  // been processed by the time the user is redirected back, so this just
-  // triggers a refetch and lets the badge/plan label catch up whenever the
-  // subscriptions table is actually updated -- it doesn't block on it.
+  // Stripe redirects back to APP_URL root after checkout (see success_url
+  // in stripe.ts), landing here as ?upgraded=stripe. There's no guarantee
+  // the webhook has already been processed by the time the user is
+  // redirected back, so this just triggers a refetch and lets the
+  // badge/plan label catch up whenever the subscriptions table is actually
+  // updated -- it doesn't block on it.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const upgraded = params.get('upgraded');
@@ -124,11 +147,7 @@ export function LandingScreen({ onEnter }: Props) {
 
     if (upgraded) {
       fetchSubscription();
-      alert(
-        upgraded === 'binance'
-          ? "Thanks! We're confirming your crypto payment — this can take a minute to reflect in your plan."
-          : "You're all set! Your Premium plan should be active now."
-      );
+      alert("You're all set! Your Premium plan should be active now.");
     } else if (canceled) {
       // No message needed -- the user just clicked "back" from checkout.
     }
@@ -249,7 +268,7 @@ export function LandingScreen({ onEnter }: Props) {
         background: 'var(--color-surface)',
         borderBottom: '1.5px solid var(--color-border)',
         boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-        padding: '0 40px',
+        padding: isMobile ? '0 16px' : '0 40px',
         height: 60,
         display: 'flex',
         alignItems: 'center',
@@ -257,22 +276,31 @@ export function LandingScreen({ onEnter }: Props) {
         position: 'sticky',
         top: 0,
         zIndex: 20,
+        gap: 12,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/logo/PDF.png" alt="livePDF" style={{ height: 44, width: 'auto' }} />
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text)', lineHeight: 1.2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <img src="/logo/PDF.png" alt="livePDF" style={{ height: isMobile ? 34 : 44, width: 'auto', flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 700, color: 'var(--color-text)', lineHeight: 1.2 }}>
               {t('app.name')}
             </div>
-            <div style={{ fontSize: 10, color: 'var(--color-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-              {t('app.tagline')}
-            </div>
+            {!isMobile && (
+              <div style={{ fontSize: 10, color: 'var(--color-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                {t('app.tagline')}
+              </div>
+            )}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            {t('landing.savedAutomatically')}
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20, flexShrink: 0 }}>
+          {/* Only shown once there's room -- on mobile the sign-in button
+              or account menu already crowds this narrow header, and this
+              line is a nice-to-have, not something a small-screen user
+              needs to see. */}
+          {!isMobile && (
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              {t('landing.savedAutomatically')}
+            </div>
+          )}
           {authStatus === 'authenticated' && authUser ? (
             <AccountMenu onUpgradeClick={requestUpgrade} />
           ) : (
@@ -281,12 +309,13 @@ export function LandingScreen({ onEnter }: Props) {
               style={{
                 fontSize: 12,
                 fontWeight: 500,
-                padding: '6px 16px',
+                padding: isMobile ? '6px 12px' : '6px 16px',
                 borderRadius: 20,
                 border: '1.5px solid var(--color-accent)',
                 background: 'transparent',
                 color: 'var(--color-accent)',
                 cursor: 'pointer',
+                whiteSpace: 'nowrap',
               }}
             >
               {t('landing.signIn')}
@@ -296,7 +325,11 @@ export function LandingScreen({ onEnter }: Props) {
       </header>
 
       {/* ── Main content ───────────────────────────────── */}
-      <div style={{ maxWidth: 1020, margin: '0 auto', padding: '44px 28px 48px' }}>
+      <div style={{
+        maxWidth: 1020,
+        margin: '0 auto',
+        padding: isMobile ? '20px 12px 32px' : '44px 28px 48px',
+      }}>
 
         {/* ── Templates section ──────────────────────── */}
         <div style={{
@@ -304,7 +337,7 @@ export function LandingScreen({ onEnter }: Props) {
           border: '1.5px solid var(--color-border)',
           borderRadius: 14,
           boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
-          marginBottom: 28,
+          marginBottom: isMobile ? 18 : 28,
           overflow: 'hidden',
         }}>
           {/* Section header */}
@@ -312,12 +345,13 @@ export function LandingScreen({ onEnter }: Props) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '18px 24px 16px',
+            padding: isMobile ? '14px 16px 12px' : '18px 24px 16px',
             borderBottom: '1.5px solid var(--color-border)',
             background: 'linear-gradient(to right, #fafbff, #ffffff)',
+            gap: 10,
           }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-text)' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: isMobile ? 14 : 15, fontWeight: 600, color: 'var(--color-text)' }}>
                 {t('landing.startNewDocument')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
@@ -331,6 +365,8 @@ export function LandingScreen({ onEnter }: Props) {
               background: 'var(--color-accent-bg)',
               padding: '4px 10px',
               borderRadius: 12,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}>
               {t('landing.templatesCount', { count: TEMPLATES.length })}
             </div>
@@ -339,10 +375,10 @@ export function LandingScreen({ onEnter }: Props) {
           {/* Template grid */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
-            gap: 20,
-            padding: '24px',
-            paddingBottom: extraTemplates.length === 0 ? 24 : 8,
+            gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 104 : 132}px, 1fr))`,
+            gap: isMobile ? 12 : 20,
+            padding: isMobile ? '16px' : '24px',
+            paddingBottom: extraTemplates.length === 0 ? (isMobile ? 16 : 24) : 8,
           }}>
             {freeTemplates.map((template) => (
               <TemplateCard
@@ -359,7 +395,7 @@ export function LandingScreen({ onEnter }: Props) {
               keep the initial grid short. The only difference for premium
               users is that nothing behind it is actually locked. */}
           {extraTemplates.length > 0 && (
-            <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'center' }}>
+            <div style={{ padding: isMobile ? '0 16px 16px' : '0 24px 24px', display: 'flex', justifyContent: 'center' }}>
               <button
                 onClick={() => setMoreTemplatesOpen((v) => !v)}
                 style={{
@@ -395,12 +431,12 @@ export function LandingScreen({ onEnter }: Props) {
           {extraTemplates.length > 0 && moreTemplatesOpen && (
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
-              gap: 20,
-              padding: '0 24px 24px',
+              gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 104 : 132}px, 1fr))`,
+              gap: isMobile ? 12 : 20,
+              padding: isMobile ? '0 16px 16px' : '0 24px 24px',
               borderTop: '1.5px solid var(--color-border)',
               marginTop: -1,
-              paddingTop: 24,
+              paddingTop: isMobile ? 16 : 24,
             }}>
               {extraTemplates.map((template) => (
                 <TemplateCard
@@ -428,12 +464,14 @@ export function LandingScreen({ onEnter }: Props) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '18px 24px 16px',
+            padding: isMobile ? '14px 16px 12px' : '18px 24px 16px',
             borderBottom: '1.5px solid var(--color-border)',
             background: 'linear-gradient(to right, #fafbff, #ffffff)',
+            gap: 10,
+            flexWrap: 'wrap',
           }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-text)' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: isMobile ? 14 : 15, fontWeight: 600, color: 'var(--color-text)' }}>
                 {t('landing.recentDocuments')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
@@ -459,13 +497,18 @@ export function LandingScreen({ onEnter }: Props) {
                       fontSize: 12,
                       fontWeight: 500,
                       cursor: 'pointer',
+                      whiteSpace: 'nowrap',
                     }}
                   >
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                       <path d="M4 4h8M4 8h5M4 12h2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                       <path d="M12 8v5m0 0l-2-2m2 2l2-2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    {SORT_OPTIONS.find((o) => o.value === recentSort)?.label}
+                    {/* On mobile there just isn't room for both the icon and
+                        the full label next to the document count pill --
+                        the icon alone (with the dropdown itself still
+                        showing full labels) keeps this row from wrapping. */}
+                    {!isMobile && SORT_OPTIONS.find((o) => o.value === recentSort)?.label}
                     <svg
                       width="9" height="9" viewBox="0 0 10 10" fill="none"
                       style={{ transform: sortMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}
@@ -530,6 +573,7 @@ export function LandingScreen({ onEnter }: Props) {
                   background: '#f1f3f4',
                   padding: '4px 10px',
                   borderRadius: 12,
+                  whiteSpace: 'nowrap',
                 }}>
                   {t('landing.documentsCount', { count: recent.length, plural: recent.length !== 1 ? 's' : '' })}
                 </div>
@@ -558,20 +602,25 @@ export function LandingScreen({ onEnter }: Props) {
 
           {!loadingRecent && recent.length > 0 && (
             <div>
-              {/* Table header row */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 140px 120px',
-                padding: '8px 24px',
-                background: '#f8f9fa',
-                borderBottom: '1px solid var(--color-border)',
-              }}>
-                {[t('landing.colDocument'), t('landing.colLastModified'), t('landing.colActions')].map((h) => (
-                  <div key={h} style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                    {h}
-                  </div>
-                ))}
-              </div>
+              {/* Table header row -- collapsed to just Document/Actions on
+                  mobile since there's no room for a separate "Last modified"
+                  column; that date instead moves under the title in each
+                  row (see RecentCard). */}
+              {!isMobile && (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 140px 120px',
+                  padding: '8px 24px',
+                  background: '#f8f9fa',
+                  borderBottom: '1px solid var(--color-border)',
+                }}>
+                  {[t('landing.colDocument'), t('landing.colLastModified'), t('landing.colActions')].map((h) => (
+                    <div key={h} style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                      {h}
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Document rows */}
               {sortedRecent.map((doc, i) => (
                 <RecentCard
@@ -579,6 +628,7 @@ export function LandingScreen({ onEnter }: Props) {
                   doc={doc}
                   isLast={i === sortedRecent.length - 1}
                   locked={!!usage?.limitReached}
+                  isMobile={isMobile}
                   onClick={() => openRecent(doc)}
                 />
               ))}
@@ -595,10 +645,11 @@ export function LandingScreen({ onEnter }: Props) {
         <div style={{
           maxWidth: 1020,
           margin: '0 auto',
-          padding: '48px 28px',
+          padding: isMobile ? '32px 16px' : '48px 28px',
           display: 'flex',
           flexWrap: 'wrap',
-          alignItems: 'center',
+          alignItems: isMobile ? 'flex-start' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           justifyContent: 'space-between',
           gap: 20,
         }}>
@@ -616,7 +667,7 @@ export function LandingScreen({ onEnter }: Props) {
               © {new Date().getFullYear()} {t('app.name')}. All rights reserved.
             </span>
           </div>
-          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 28 }}>
+          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? 16 : 28 }}>
             {[
               { label: 'Privacy Policy', onClick: () => setStaticPage('privacy') },
               { label: 'Terms of Service', onClick: () => setStaticPage('terms') },
@@ -1221,11 +1272,13 @@ function RecentCard({
   doc,
   isLast,
   locked,
+  isMobile,
   onClick,
 }: {
   doc: DocumentSummary;
   isLast: boolean;
   locked: boolean;
+  isMobile: boolean;
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -1237,21 +1290,25 @@ function RecentCard({
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 140px 120px',
+        // Mobile drops the separate "Last modified" column entirely (see
+        // below, it's folded into the title cell instead) and gives the
+        // Actions cell just enough width for the compact Open button/badge.
+        gridTemplateColumns: isMobile ? '1fr 84px' : '1fr 140px 120px',
         alignItems: 'center',
-        padding: '14px 24px',
+        padding: isMobile ? '12px 16px' : '14px 24px',
         borderBottom: isLast ? 'none' : '1px solid var(--color-border)',
         background: hovered && !locked ? '#f8faff' : 'transparent',
         opacity: locked ? 0.55 : 1,
         transition: 'background 0.12s ease, opacity 0.12s ease',
         cursor: 'pointer',
+        gap: 8,
       }}
       onClick={onClick}
     >
       {/* Name + icon */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 12, overflow: 'hidden', minWidth: 0 }}>
         <div style={{
-          width: 36, height: 44, flexShrink: 0,
+          width: isMobile ? 30 : 36, height: isMobile ? 37 : 44, flexShrink: 0,
           background: 'var(--color-accent-bg)',
           borderRadius: 5,
           border: '1px solid #c5d9f8',
@@ -1264,47 +1321,59 @@ function RecentCard({
             <rect x="4" y="12" width="7" height="1.4" rx="0.7" fill="#1a73e8" fillOpacity="0.45"/>
           </svg>
         </div>
-        <span style={{
-          fontSize: 13, fontWeight: 500, color: 'var(--color-text)',
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-          {doc.title || 'Untitled document'}
-        </span>
+        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+          <div style={{
+            fontSize: 13, fontWeight: 500, color: 'var(--color-text)',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {doc.title || 'Untitled document'}
+          </div>
+          {/* Last-modified date, folded in here only on mobile since there's
+              no separate column for it at this width. */}
+          {isMobile && (
+            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
+              {formatAgo(doc.updatedAt)}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Last modified */}
-      <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-        {formatAgo(doc.updatedAt)}
-      </div>
+      {/* Last modified -- desktop/tablet only, mobile shows it under the title instead */}
+      {!isMobile && (
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+          {formatAgo(doc.updatedAt)}
+        </div>
+      )}
 
       {/* Open button */}
-      <div>
+      <div style={{ textAlign: 'right' }}>
         {locked ? (
           <span
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 4,
-              fontSize: 11,
+              fontSize: isMobile ? 10 : 11,
               fontWeight: 600,
-              padding: '5px 12px',
+              padding: isMobile ? '5px 8px' : '5px 12px',
               borderRadius: 20,
               background: 'rgba(32,33,36,0.08)',
               color: 'var(--color-text-muted)',
+              whiteSpace: 'nowrap',
             }}
           >
             <svg width="9" height="9" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor" />
               <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.4" fill="none" />
             </svg>
-            Limit reached
+            {!isMobile && 'Limit reached'}
           </span>
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); onClick(); }}
             style={{
-              fontSize: 12,
-              padding: '5px 14px',
+              fontSize: isMobile ? 11 : 12,
+              padding: isMobile ? '5px 10px' : '5px 14px',
               borderRadius: 20,
               border: '1.5px solid var(--color-accent)',
               background: hovered ? 'var(--color-accent)' : 'transparent',
@@ -1312,6 +1381,7 @@ function RecentCard({
               fontWeight: 500,
               transition: 'background 0.15s ease, color 0.15s ease',
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
             }}
           >
             {t('landing.open')}

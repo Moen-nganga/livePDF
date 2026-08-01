@@ -25,8 +25,8 @@ export function PrivacyPolicyScreen({ onBack }: Props) {
           </li>
           <li style={{ marginBottom: 6 }}>
             <strong>Payment information.</strong> If you subscribe to Premium, payments are processed by
-            Stripe or Binance Pay. We receive confirmation that a payment succeeded, but we never see or
-            store your card number or wallet credentials.
+            Stripe. We receive confirmation that a payment succeeded, but we never see or store your
+            card number.
           </li>
           <li>
             <strong>Usage information.</strong> Basic technical data, such as browser type and general
@@ -73,9 +73,9 @@ export function PrivacyPolicyScreen({ onBack }: Props) {
 
       <StaticSection title="6. Third-Party Services">
         <p>
-          We rely on a small number of third parties to operate livePDF, including Stripe and Binance Pay
-          for payment processing and an email provider for delivering sign-in links. Each of these
-          providers has its own privacy policy governing how it handles data on our behalf.
+          We rely on a small number of third parties to operate livePDF, including Stripe for payment
+          processing and an email provider for delivering sign-in links. Each of these providers has its
+          own privacy policy governing how it handles data on our behalf.
         </p>
       </StaticSection>
 
