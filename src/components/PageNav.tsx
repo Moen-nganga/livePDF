@@ -38,6 +38,11 @@ function useIsMobile(breakpoint = 640): boolean {
   return isMobile;
 }
 
+// Fixed height of the mobile bottom tab strip -- exported so App.tsx can
+// reserve matching space (paddingBottom) in the canvas area instead of the
+// fixed-position bar overlapping page content.
+export const PAGE_NAV_MOBILE_BAR_HEIGHT = 48;
+
 export function PageNav({ onRequirePremium }: PageNavProps) {
   const document = useEditorStore((s) => s.document);
   const activePageIndex = useEditorStore((s) => s.activePageIndex);
@@ -66,7 +71,17 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
   const [renameValue, setRenameValue] = useState('');
   const [premiumPromptOpen, setPremiumPromptOpen] = useState(false);
 
-  // Close the context menu on any click elsewhere, or on Escape
+  // Mobile-only: which page's action sheet (Rename/Duplicate/Delete) is
+  // open, and whether the rename dialog is showing. Kept separate from the
+  // desktop `menu`/`renamingId` state above because the mobile bottom-sheet
+  // presentation is different enough (full-width sheet vs. anchored
+  // context menu, modal rename vs. inline input) that reusing the same
+  // state would tangle two different UIs together.
+  const [mobileActionSheetPageId, setMobileActionSheetPageId] = useState<string | null>(null);
+  const [mobileRenamePageId, setMobileRenamePageId] = useState<string | null>(null);
+  const [mobileRenameValue, setMobileRenameValue] = useState('');
+
+  // Close the (desktop) context menu on any click elsewhere, or on Escape
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -106,10 +121,12 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
       // an explanation instead of the click silently doing nothing.
       alert('A document needs at least one page — add another page before deleting this one.');
       setMenu(null);
+      setMobileActionSheetPageId(null);
       return;
     }
     removePage(pageId);
     setMenu(null);
+    setMobileActionSheetPageId(null);
   }
 
   function handleAddPage() {
@@ -123,19 +140,151 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
   function handleDuplicate(pageId: string) {
     if (atPageLimit) {
       setMenu(null);
+      setMobileActionSheetPageId(null);
       setPremiumPromptOpen(true);
       return;
     }
     duplicatePage(pageId);
     setMenu(null);
+    setMobileActionSheetPageId(null);
   }
 
-  // Collapsed to a thin strip -- most useful on mobile, where the sidebar's
-  // own width is real estate taken directly from the canvas, but left
-  // available on desktop too via the same toggle for anyone who wants the
-  // extra room. Nothing about page state is lost while collapsed; this is
-  // purely a view toggle (isPageNavCollapsed already lives in the store as
-  // transient view state, same category as showRuler/showComments).
+  function openMobileRename(page: Page, index: number) {
+    setMobileRenamePageId(page.id);
+    setMobileRenameValue(labelFor(page, index));
+    setMobileActionSheetPageId(null);
+  }
+
+  function commitMobileRename() {
+    if (!mobileRenamePageId) return;
+    const trimmed = mobileRenameValue.trim();
+    if (trimmed) renamePage(mobileRenamePageId, trimmed);
+    setMobileRenamePageId(null);
+  }
+
+  // ---- Mobile: horizontal bottom tab strip, Google Sheets style ----
+  // Tapping a tab that's already active opens the action sheet (rename /
+  // duplicate / delete) rather than dedicating separate on-screen space to
+  // a per-tab menu button, which wouldn't fit at this bar's height once
+  // there are more than a couple of pages.
+  if (isMobile) {
+    return (
+      <>
+        <nav
+          className="pagenav-mobile-bar"
+          aria-label="Pages"
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: PAGE_NAV_MOBILE_BAR_HEIGHT,
+            display: 'flex',
+            alignItems: 'stretch',
+            background: 'var(--color-surface)',
+            borderTop: '1px solid var(--color-sidebar-border)',
+            overflowX: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            zIndex: 500,
+          }}
+        >
+          {document.pages.map((page, i) => {
+            const active = i === activePageIndex;
+            return (
+              <button
+                key={page.id}
+                onClick={() => {
+                  if (active) {
+                    setMobileActionSheetPageId(page.id);
+                  } else {
+                    setActivePageIndex(i);
+                  }
+                }}
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '0 16px',
+                  border: 'none',
+                  borderTop: active ? '2px solid var(--color-accent)' : '2px solid transparent',
+                  background: active ? 'var(--color-accent-bg)' : 'transparent',
+                  fontWeight: active ? 600 : 400,
+                  fontSize: 13,
+                  color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {labelFor(page, i)}
+                {active && <span style={{ fontSize: 10 }}>▾</span>}
+              </button>
+            );
+          })}
+          <button
+            onClick={handleAddPage}
+            title={atPageLimit ? `Free plan limit: ${FREE_PAGE_LIMIT} pages — upgrade for unlimited pages` : 'Add page'}
+            style={{
+              flexShrink: 0,
+              width: 44,
+              border: 'none',
+              borderLeft: '1px solid var(--color-sidebar-border)',
+              background: 'transparent',
+              fontSize: 18,
+              color: atPageLimit ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+            }}
+          >
+            {atPageLimit ? '⭐' : '+'}
+          </button>
+        </nav>
+
+        {mobileActionSheetPageId && (
+          <MobileActionSheet
+            pageLabel={(() => {
+              const idx = document.pages.findIndex((p) => p.id === mobileActionSheetPageId);
+              const page = document.pages[idx];
+              return page ? labelFor(page, idx) : '';
+            })()}
+            onRename={() => {
+              const idx = document.pages.findIndex((p) => p.id === mobileActionSheetPageId);
+              const page = document.pages[idx];
+              if (page) openMobileRename(page, idx);
+            }}
+            onDuplicate={() => handleDuplicate(mobileActionSheetPageId)}
+            onDelete={() => handleDelete(mobileActionSheetPageId)}
+            onClose={() => setMobileActionSheetPageId(null)}
+          />
+        )}
+
+        {mobileRenamePageId && (
+          <MobileRenameDialog
+            value={mobileRenameValue}
+            onChange={setMobileRenameValue}
+            onCancel={() => setMobileRenamePageId(null)}
+            onSave={commitMobileRename}
+          />
+        )}
+
+        {premiumPromptOpen && (
+          <PremiumRequiredDialog
+            featureName={`Pages beyond ${FREE_PAGE_LIMIT}`}
+            onClose={() => setPremiumPromptOpen(false)}
+            onUpgrade={() => {
+              setPremiumPromptOpen(false);
+              onRequirePremium?.();
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
+  // ---- Desktop: unchanged side column ----
+
+  // Collapsed to a thin strip -- left available on desktop via a toggle for
+  // anyone who wants the extra canvas width. Nothing about page state is
+  // lost while collapsed; this is purely a view toggle (isPageNavCollapsed
+  // already lives in the store as transient view state, same category as
+  // showRuler/showComments).
   if (isCollapsed) {
     return (
       <button
@@ -167,12 +316,12 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
     <aside
       className="app-sidebar"
       style={{
-        width: isMobile ? 100 : 152,
+        width: 152,
         flexShrink: 0,
-        padding: isMobile ? 8 : 12,
+        padding: 12,
         display: 'flex',
         flexDirection: 'column',
-        gap: isMobile ? 6 : 8,
+        gap: 8,
         overflowY: 'auto',
         position: 'relative',
       }}
@@ -214,8 +363,8 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
               }}
               style={{
                 width: '100%',
-                padding: isMobile ? 6 : 8,
-                fontSize: isMobile ? 11 : 12,
+                padding: 8,
+                fontSize: 12,
                 border: '2px solid var(--color-accent)',
                 boxSizing: 'border-box',
               }}
@@ -234,8 +383,8 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
                 width: '100%',
                 border: i === activePageIndex ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
                 background: '#fff',
-                padding: isMobile ? 6 : 8,
-                fontSize: isMobile ? 11 : 12,
+                padding: 8,
+                fontSize: 12,
                 cursor: 'pointer',
                 boxSizing: 'border-box',
                 display: 'block',
@@ -254,18 +403,13 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
         onClick={handleAddPage}
         title={atPageLimit ? `Free plan limit: ${FREE_PAGE_LIMIT} pages — upgrade for unlimited pages` : undefined}
         style={{
-          fontSize: isMobile ? 11 : 12,
-          padding: isMobile ? '6px 4px' : undefined,
+          fontSize: 12,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}
       >
-        {atPageLimit
-          ? isMobile
-            ? `⭐ ${pageCount}/${FREE_PAGE_LIMIT}`
-            : `⭐ Add page (${pageCount}/${FREE_PAGE_LIMIT})`
-          : '+ Add page'}
+        {atPageLimit ? `⭐ Add page (${pageCount}/${FREE_PAGE_LIMIT})` : '+ Add page'}
       </button>
 
       {menu && (
@@ -360,5 +504,147 @@ function MenuItem({
     >
       {label}
     </button>
+  );
+}
+
+// Bottom sheet with Rename / Duplicate / Delete for the mobile tab strip --
+// large tap targets, dimmed backdrop, dismissable by tapping outside.
+function MobileActionSheet({
+  pageLabel,
+  onRename,
+  onDuplicate,
+  onDelete,
+  onClose,
+}: {
+  pageLabel: string;
+  onRename: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.35)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'flex-end',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%',
+          background: '#fff',
+          borderTopLeftRadius: 12,
+          borderTopRightRadius: 12,
+          paddingBottom: 'env(safe-area-inset-bottom, 12px)',
+          boxShadow: '0 -4px 16px rgba(0,0,0,0.15)',
+        }}
+      >
+        <div style={{ padding: '14px 16px 6px', fontSize: 13, color: '#888', fontWeight: 600 }}>
+          {pageLabel}
+        </div>
+        <SheetItem label="Rename" onClick={onRename} />
+        <SheetItem label="Duplicate" onClick={onDuplicate} />
+        <SheetItem label="Delete" onClick={onDelete} danger />
+        <SheetItem label="Cancel" onClick={onClose} />
+      </div>
+    </div>
+  );
+}
+
+function SheetItem({
+  label,
+  onClick,
+  danger,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        padding: '14px 16px',
+        border: 'none',
+        borderTop: '1px solid #eee',
+        background: 'none',
+        fontSize: 15,
+        color: danger ? '#cc3333' : '#222',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Centered modal for renaming a page on mobile -- a full input dialog reads
+// better on a small screen than trying to swap a tab in the scrolling
+// bottom strip into an inline edit field.
+function MobileRenameDialog({
+  value,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1100,
+        padding: 16,
+        boxSizing: 'border-box',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="surface-card"
+        style={{ width: 'min(320px, 92vw)', padding: 20, boxSizing: 'border-box' }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Rename page</div>
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => e.key === 'Enter' && onSave()}
+          style={{
+            width: '100%',
+            padding: 10,
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            fontSize: 16, // 16px prevents iOS Safari from auto-zooming on focus
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button onClick={onCancel} style={{ padding: '10px 14px' }}>
+            Cancel
+          </button>
+          <button className="btn-accent" onClick={onSave} style={{ padding: '10px 14px' }}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
