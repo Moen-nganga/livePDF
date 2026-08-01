@@ -6,7 +6,6 @@ import { nanoid } from 'nanoid';
 import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
 import { authRouter, requireAuth, optionalAuth } from './auth.js';
 import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
-import { createBinanceOrder, verifyBinanceWebhookSignature, handleBinanceWebhookEvent } from './binancePay.js';
 import { getChatReply, type ChatMessage } from './ai.js';
 import { usersRepo } from './db.js';
 import type { PlanId } from './plans.js';
@@ -22,11 +21,11 @@ app.use(
 app.use(cookieParser());
 
 // --- Webhook routes: MUST be registered before express.json() below. ---
-// Both Stripe's and Binance Pay's signature verification is computed over
-// the *raw* request body bytes -- if the global JSON parser runs first,
-// the body has already been parsed/re-serialized and the signature check
-// will fail (harmlessly, but permanently). express.raw() here captures the
-// untouched bytes for just these two routes.
+// Stripe's signature verification is computed over the *raw* request body
+// bytes -- if the global JSON parser runs first, the body has already
+// been parsed/re-serialized and the signature check will fail (harmlessly,
+// but permanently). express.raw() here captures the untouched bytes for
+// just this route.
 
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   const signature = req.header('stripe-signature');
@@ -51,35 +50,6 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     // 500 tells Stripe to retry -- appropriate here since the failure is
     // on our side (e.g. a transient DB error), not a bad event.
     res.status(500).json({ error: 'Internal error' });
-  }
-});
-
-app.post('/api/webhooks/binance', express.raw({ type: 'application/json' }), async (req, res) => {
-  const timestamp = req.header('binancepay-timestamp');
-  const nonce = req.header('binancepay-nonce');
-  const signature = req.header('binancepay-signature');
-  const rawBody = (req.body as Buffer).toString('utf8');
-
-  if (!timestamp || !nonce || !signature) {
-    return res.status(400).json({ returnCode: 'FAIL', returnMessage: 'Missing signature headers' });
-  }
-
-  try {
-    const valid = await verifyBinanceWebhookSignature(timestamp, nonce, rawBody, signature);
-    if (!valid) {
-      console.error('Binance Pay webhook signature verification failed');
-      return res.status(400).json({ returnCode: 'FAIL', returnMessage: 'Invalid signature' });
-    }
-
-    const payload = JSON.parse(rawBody);
-    await handleBinanceWebhookEvent(payload);
-
-    // Binance Pay requires exactly this ack shape on success, or it will
-    // keep retrying the notification (up to 6 times).
-    res.json({ returnCode: 'SUCCESS', returnMessage: null });
-  } catch (err) {
-    console.error('Error handling Binance Pay webhook event:', err);
-    res.status(500).json({ returnCode: 'FAIL', returnMessage: 'Internal error' });
   }
 });
 
@@ -320,22 +290,6 @@ app.post('/api/checkout/stripe', requireAuth, async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Not signed in' });
     const url = await createCheckoutSession(userId, user.email, planId);
     res.json({ url });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to start checkout' });
-  }
-});
-
-app.post('/api/checkout/binance', requireAuth, async (req, res) => {
-  const userId = (req as any).userId;
-  const planId = req.body?.planId as PlanId | undefined;
-  if (planId !== 'pro_monthly' && planId !== 'pro_yearly') {
-    return res.status(400).json({ error: 'Invalid planId' });
-  }
-
-  try {
-    const checkoutUrl = await createBinanceOrder(userId, planId);
-    res.json({ url: checkoutUrl });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to start checkout' });

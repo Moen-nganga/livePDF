@@ -8,21 +8,18 @@ interface Props {
 
 export function UpgradeScreen({ onBack }: Props) {
   const [selectedPlan, setSelectedPlan] = useState<PlanId>('pro_monthly');
-  const [loadingProvider, setLoadingProvider] = useState<'stripe' | 'binance' | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  async function checkout(provider: 'stripe' | 'binance') {
+  async function checkout() {
     setError('');
-    setLoadingProvider(provider);
+    setLoading(true);
     try {
-      const url =
-        provider === 'stripe'
-          ? await api.createStripeCheckout(selectedPlan)
-          : await api.createBinanceCheckout(selectedPlan);
+      const url = await api.createStripeCheckout(selectedPlan);
       window.location.href = url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
-      setLoadingProvider(null);
+      setLoading(false);
     }
   }
 
@@ -147,10 +144,10 @@ export function UpgradeScreen({ onBack }: Props) {
           <p style={{ color: 'var(--color-danger)', fontSize: 13, marginBottom: 12, textAlign: 'center' }}>{error}</p>
         )}
 
-        {/* Checkout buttons */}
+        {/* Checkout */}
         <button
-          onClick={() => checkout('stripe')}
-          disabled={loadingProvider !== null}
+          onClick={checkout}
+          disabled={loading}
           style={{
             width: '100%',
             boxSizing: 'border-box',
@@ -161,41 +158,19 @@ export function UpgradeScreen({ onBack }: Props) {
             color: 'white',
             fontSize: 14,
             fontWeight: 600,
-            cursor: loadingProvider ? 'default' : 'pointer',
-            opacity: loadingProvider && loadingProvider !== 'stripe' ? 0.6 : 1,
-            marginBottom: 10,
+            cursor: loading ? 'default' : 'pointer',
+            opacity: loading ? 0.6 : 1,
+            marginBottom: 20,
             boxShadow: 'var(--shadow-accent-glow)',
             transition: 'box-shadow 0.15s ease, opacity 0.15s ease',
           }}
         >
-          {loadingProvider === 'stripe' ? 'Redirecting…' : 'Pay with card (Stripe)'}
-        </button>
-
-        <button
-          onClick={() => checkout('binance')}
-          disabled={loadingProvider !== null}
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            padding: '12px 0',
-            borderRadius: 12,
-            border: '1.5px solid var(--color-border-strong)',
-            background: 'transparent',
-            color: 'var(--color-text-secondary)',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: loadingProvider ? 'default' : 'pointer',
-            opacity: loadingProvider && loadingProvider !== 'binance' ? 0.6 : 1,
-            marginBottom: 20,
-            transition: 'background 0.15s ease, opacity 0.15s ease',
-          }}
-        >
-          {loadingProvider === 'binance' ? 'Redirecting…' : 'Pay with crypto (Binance Pay)'}
+          {loading ? 'Redirecting…' : 'Pay with card (Stripe)'}
         </button>
 
         <button
           onClick={onBack}
-          disabled={loadingProvider !== null}
+          disabled={loading}
           style={{
             width: '100%',
             boxSizing: 'border-box',
