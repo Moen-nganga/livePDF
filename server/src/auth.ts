@@ -11,10 +11,26 @@ const MAGIC_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes -- short-lived on purpos
 // login. Every authenticated request pushes expires_at forward another 14
 // days (see refreshSession below), so a user who visits regularly never
 // gets signed out -- only 14 days of total inactivity expires them.
-const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const isProd = process.env.NODE_ENV === 'production';
+
+// Admin accounts, gated by email rather than a DB column -- avoids a
+// migration for a single-admin setup. If you ever need more than a
+// handful of admins, move this to a real `is_admin` column on the users
+// table and check that instead; an allowlist that has to be redeployed
+// to change doesn't scale past a few trusted people.
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS ?? 'moenmburu41@gmail.com')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function isAdminEmail(email: string): boolean {
+  return ADMIN_EMAILS.has(email.toLowerCase());
+}
 
 // --- Google OAuth config ---
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
@@ -141,6 +157,26 @@ export async function requireAuth(
   next();
 }
 
+// Rejects with 401 if not signed in, or 403 if signed in but not an admin.
+// Layers on top of requireAuth's session check rather than duplicating it
+// -- mount as [requireAuth, requireAdmin] so req.userId is already set by
+// the time this runs.
+export async function requireAdmin(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const userId = (req as any).userId;
+  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+
+  const user = await usersRepo.getById(userId);
+  if (!user || !isAdminEmail(user.email)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  next();
+}
+
 export const authRouter = express.Router();
 
 // Step 1: user submits their email, we mail them a one-time link.
@@ -194,7 +230,7 @@ authRouter.post('/verify', async (req, res) => {
 
   await establishSession(res, user.id, typeof deviceId === 'string' ? deviceId : null);
 
-  res.json({ ok: true, user: { id: user.id, email: user.email } });
+  res.json({ ok: true, user: { id: user.id, email: user.email, isAdmin: isAdminEmail(user.email) } });
 });
 
 // --- Google OAuth (Authorization Code flow) ---
@@ -305,5 +341,5 @@ authRouter.get('/me', optionalAuth, async (req, res) => {
   const user = await usersRepo.getById(userId);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
 
-  res.json({ user: { id: user.id, email: user.email } });
+  res.json({ user: { id: user.id, email: user.email, isAdmin: isAdminEmail(user.email) } });
 });

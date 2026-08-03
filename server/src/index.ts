@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { nanoid } from 'nanoid';
 import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
 import { authRouter, requireAuth, optionalAuth } from './auth.js';
+import { adminRouter } from './admin.js';
 import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
 import { getChatReply, type ChatMessage } from './ai.js';
 import { usersRepo } from './db.js';
@@ -57,6 +58,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
 app.use(express.json({ limit: '25mb' })); // generous: documents embed base64 images
 
 app.use('/api/auth', authRouter);
+app.use('/api/admin', adminRouter);
 
 // Attaches req.userId when a valid session cookie is present, without
 // requiring one -- needed here (not just on /api/auth/me) so the document

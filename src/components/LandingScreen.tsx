@@ -14,6 +14,7 @@ import { PremiumRequiredDialog } from './PremiumRequiredDialog';
 import { PrivacyPolicyScreen } from './PrivacyPolicyScreen';
 import { TermsOfServiceScreen } from './TermsOfServiceScreen';
 import { HelpCenterScreen } from './HelpCenterScreen';
+import { AdminScreen } from './AdminScreen';
 
 interface Props {
   onEnter: () => void;
@@ -41,6 +42,20 @@ function useIsMobile(breakpoint = 640): boolean {
   return isMobile;
 }
 
+// This screen's own internal "sub-view" -- Auth, Upgrade, one of the
+// static footer pages, or Admin -- layered on top of whatever the landing
+// page itself is showing. Tracked in history.state.landingSub (merged into
+// the same entry App.tsx already tags with `screen: 'landing'`, rather than
+// a separate top-level Screen) so the browser back button steps between
+// these sub-views instead of leaving the app, the same fix applied in
+// App.tsx for its own Auth/Upgrade toggles.
+type LandingSub = 'auth' | 'upgrade' | 'privacy' | 'terms' | 'help' | 'admin' | null;
+
+function pushLandingSub(sub: LandingSub) {
+  if ((window.history.state?.landingSub ?? null) === sub) return; // already there
+  window.history.pushState({ ...window.history.state, landingSub: sub }, '', window.location.href);
+}
+
 export function LandingScreen({ onEnter }: Props) {
   const loadDocument = useEditorStore((s) => s.loadDocument);
   const [recent, setRecent] = useState<DocumentSummary[]>([]);
@@ -57,6 +72,7 @@ export function LandingScreen({ onEnter }: Props) {
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
   const [staticPage, setStaticPage] = useState<'privacy' | 'terms' | 'help' | null>(null);
+  const [showAdminScreen, setShowAdminScreen] = useState(false);
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
@@ -101,12 +117,47 @@ export function LandingScreen({ onEnter }: Props) {
     return () => window.removeEventListener('mousedown', onClick);
   }, [sortMenuOpen]);
 
+  // Tag the current history entry with landingSub: null the first time this
+  // screen mounts with no sub-view open, merging into whatever App.tsx has
+  // already put on this entry (screen: 'landing') rather than overwriting
+  // it. This gives the very first pushLandingSub() call something real to
+  // return to on back, the same reasoning as App.tsx's own initial tag.
+  useEffect(() => {
+    if (!('landingSub' in (window.history.state ?? {}))) {
+      window.history.replaceState({ ...window.history.state, landingSub: null }, '', window.location.href);
+    }
+  }, []);
+
+  // Sync this screen's sub-view from the browser's back/forward
+  // navigation. App.tsx has its own popstate listener reading
+  // e.state.screen; this one reads e.state.landingSub instead, so the two
+  // coexist without stepping on each other -- App's listener only cares
+  // about top-level screen (which stays 'landing' the whole time the user
+  // is inside any of these sub-views).
+  useEffect(() => {
+    function onPopState(e: PopStateEvent) {
+      const sub = (e.state?.landingSub ?? null) as LandingSub;
+      setShowAuthScreen(sub === 'auth');
+      setShowUpgradeScreen(sub === 'upgrade');
+      setStaticPage(sub === 'privacy' || sub === 'terms' || sub === 'help' ? sub : null);
+      setShowAdminScreen(sub === 'admin');
+    }
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   // Same client-side-only caveat as elsewhere (Toolbar, AIChatWidget) --
   // this only decides what the landing screen shows/allows. The real
   // enforcement has to live wherever documents actually get saved.
   const isPremium =
     subscription?.status === 'active' &&
     (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
+
+  // Same caveat again: this only decides whether the Admin button/screen
+  // render. The server must independently verify admin status on every
+  // /api/admin/* route (and ideally on getUsage/saveDocument too, so
+  // admins bypass the weekly limit for real and not just in this UI).
+  const isAdmin = !!authUser?.isAdmin;
 
   // Non-premium visitors see the free templates up front and the premium
   // ones tucked behind a "More templates" toggle (still locked, so they can
@@ -168,14 +219,27 @@ export function LandingScreen({ onEnter }: Props) {
   function requestUpgrade() {
     if (authStatus !== 'authenticated') {
       setShowAuthScreen(true);
+      pushLandingSub('auth');
       return;
     }
     setShowUpgradeScreen(true);
+    pushLandingSub('upgrade');
+  }
+
+  function openStaticPage(page: 'privacy' | 'terms' | 'help') {
+    setStaticPage(page);
+    pushLandingSub(page);
+  }
+
+  function openAdmin() {
+    if (!isAdmin) return;
+    setShowAdminScreen(true);
+    pushLandingSub('admin');
   }
 
   async function openTemplate(template: TemplateDefinition) {
     if (creating) return;
-    if (template.premium && !isPremium) {
+    if (template.premium && !isPremium && !isAdmin) {
       setPremiumTemplate(template);
       return;
     }
@@ -220,7 +284,8 @@ export function LandingScreen({ onEnter }: Props) {
     // creating a new one does. Gate it here using the read-only usage
     // snapshot fetched on mount, so free users who've hit their weekly cap
     // can't keep working just by reopening old files instead of new ones.
-    if (usage?.limitReached) {
+    // Admins skip this UI gate entirely (see isAdmin note above).
+    if (usage?.limitReached && !isAdmin) {
       setLimitReachedMessage(
         `Free plan is limited to ${usage.limit} PDFs per week. Upgrade to Premium for unlimited.`
       );
@@ -237,23 +302,31 @@ export function LandingScreen({ onEnter }: Props) {
   }
 
   if (showAuthScreen) {
-    return <AuthScreen onBack={() => setShowAuthScreen(false)} />;
+    // Uses history.back() rather than setShowAuthScreen(false) directly, so
+    // this on-screen Back button and the browser's own back button land on
+    // the same place -- popstate above then flips showAuthScreen off in
+    // sync with whatever entry we land back on.
+    return <AuthScreen onBack={() => window.history.back()} />;
   }
 
   if (showUpgradeScreen) {
-    return <UpgradeScreen onBack={() => setShowUpgradeScreen(false)} />;
+    return <UpgradeScreen onBack={() => window.history.back()} />;
   }
 
   if (staticPage === 'privacy') {
-    return <PrivacyPolicyScreen onBack={() => setStaticPage(null)} />;
+    return <PrivacyPolicyScreen onBack={() => window.history.back()} />;
   }
 
   if (staticPage === 'terms') {
-    return <TermsOfServiceScreen onBack={() => setStaticPage(null)} />;
+    return <TermsOfServiceScreen onBack={() => window.history.back()} />;
   }
 
   if (staticPage === 'help') {
-    return <HelpCenterScreen onBack={() => setStaticPage(null)} />;
+    return <HelpCenterScreen onBack={() => window.history.back()} />;
+  }
+
+  if (showAdminScreen) {
+    return <AdminScreen onBack={() => window.history.back()} />;
   }
 
   return (
@@ -301,11 +374,43 @@ export function LandingScreen({ onEnter }: Props) {
               {t('landing.savedAutomatically')}
             </div>
           )}
+          {isAdmin && (
+            <button
+              onClick={openAdmin}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                padding: isMobile ? '6px 10px' : '6px 14px',
+                borderRadius: 20,
+                border: '1.5px solid #1f2937',
+                background: '#1f2937',
+                color: 'white',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 2l7 3v6c0 5-3.4 8.7-7 10-3.6-1.3-7-5-7-10V5l7-3z"
+                  stroke="white"
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {!isMobile && 'Admin'}
+            </button>
+          )}
           {authStatus === 'authenticated' && authUser ? (
             <AccountMenu onUpgradeClick={requestUpgrade} />
           ) : (
             <button
-              onClick={() => setShowAuthScreen(true)}
+              onClick={() => {
+                setShowAuthScreen(true);
+                pushLandingSub('auth');
+              }}
               style={{
                 fontSize: 12,
                 fontWeight: 500,
@@ -385,7 +490,7 @@ export function LandingScreen({ onEnter }: Props) {
                 key={template.id}
                 template={template}
                 loading={creating === template.id}
-                locked={!!template.premium && !isPremium}
+                locked={!!template.premium && !isPremium && !isAdmin}
                 onClick={() => openTemplate(template)}
               />
             ))}
@@ -443,7 +548,7 @@ export function LandingScreen({ onEnter }: Props) {
                   key={template.id}
                   template={template}
                   loading={creating === template.id}
-                  locked={!isPremium}
+                  locked={!isPremium && !isAdmin}
                   onClick={() => openTemplate(template)}
                 />
               ))}
@@ -475,7 +580,7 @@ export function LandingScreen({ onEnter }: Props) {
                 {t('landing.recentDocuments')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                {usage?.limitReached
+                {usage?.limitReached && !isAdmin
                   ? 'Weekly limit reached — upgrade to keep editing.'
                   : t('landing.pickUpWhereYouLeftOff')}
               </div>
@@ -627,7 +732,7 @@ export function LandingScreen({ onEnter }: Props) {
                   key={doc.id}
                   doc={doc}
                   isLast={i === sortedRecent.length - 1}
-                  locked={!!usage?.limitReached}
+                  locked={!!usage?.limitReached && !isAdmin}
                   isMobile={isMobile}
                   onClick={() => openRecent(doc)}
                 />
@@ -669,9 +774,9 @@ export function LandingScreen({ onEnter }: Props) {
           </div>
           <nav style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? 16 : 28 }}>
             {[
-              { label: 'Privacy Policy', onClick: () => setStaticPage('privacy') },
-              { label: 'Terms of Service', onClick: () => setStaticPage('terms') },
-              { label: 'Help Center', onClick: () => setStaticPage('help') },
+              { label: 'Privacy Policy', onClick: () => openStaticPage('privacy') },
+              { label: 'Terms of Service', onClick: () => openStaticPage('terms') },
+              { label: 'Help Center', onClick: () => openStaticPage('help') },
               { label: 'Contact', href: '/contact' }, // TODO: wire up once the Contact page exists
             ].map((link) =>
               'href' in link ? (

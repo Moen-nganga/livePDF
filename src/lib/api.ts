@@ -29,6 +29,11 @@ export interface ShareInfo {
 export interface AuthUser {
   id: string;
   email: string;
+  // Server-asserted flag -- NOT something the client can grant itself.
+  // The backend's /api/auth/me (and every other route that checks it,
+  // e.g. usage limits and /api/admin/*) must read this from the user's
+  // row in the DB, never trust it if sent from the client on a request.
+  isAdmin?: boolean;
 }
 
 export type PlanId = 'free' | 'pro_monthly' | 'pro_yearly';
@@ -45,7 +50,8 @@ export interface SubscriptionInfo {
 // fetched by LandingScreen so opening an old document (a pure read) can be
 // gated the same way creating a new one already is via WeeklyLimitError,
 // instead of only discovering the limit on the next autosave tick.
-// `limit` is null for premium accounts (unlimited).
+// `limit` is null for premium accounts (unlimited) -- and, once the server
+// is updated, should also be null for admin accounts.
 export interface UsageInfo {
   used: number;
   limit: number | null;
@@ -78,6 +84,22 @@ async function parseErrorBody(res: Response): Promise<any> {
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+}
+
+// Site-wide analytics for the admin dashboard. Backend should compute these
+// from the users/subscriptions tables -- this endpoint must itself be
+// protected server-side (401/403 for any non-admin caller), since this is
+// exactly the kind of data that must never depend solely on the client
+// choosing whether to render the Admin button.
+export interface AdminAnalytics {
+  totalUsers: number;
+  loggedInLast24h: number;
+  freePlanUsers: number;
+  premiumUsers: number;
+  premiumMonthly: number;
+  premiumYearly: number;
+  documentsCreatedThisWeek: number;
+  generatedAt: string;
 }
 
 export const api = {
@@ -249,5 +271,20 @@ export const api = {
       throw new Error(data.error ?? 'Failed to get a response');
     }
     return data.reply;
+  },
+
+  // --- Admin ---
+  // Backend MUST reject this with 403 for any non-admin session -- this
+  // client call is only a convenience, not the access control.
+  async getAdminAnalytics(): Promise<AdminAnalytics> {
+    const res = await fetch(`${API_BASE}/api/admin/analytics`, {
+      headers: headers(),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const data = await parseErrorBody(res);
+      throw new Error(data.error ?? 'Failed to load analytics');
+    }
+    return res.json();
   },
 };
