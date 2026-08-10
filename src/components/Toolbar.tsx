@@ -54,15 +54,15 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   const { triggerImagePick, fileInputElement } = useImageAdd();
   const t = useI18nStore((s) => s.t);
 
-  const subscription = useSubscriptionStore((s) => s.subscription);
   // Client-side gate only -- there's no server resource being consumed by
   // adding a signature (unlike the weekly document-creation limit, which
   // is enforced server-side too), so this restricts the UI but a
   // technically determined free user could bypass it via devtools. Worth
   // revisiting with a server-side check if this ever needs to be airtight.
-  const isPremium =
-    subscription?.status === 'active' &&
-    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
+  // Uses the store's isPremium() selector (not an inline plan/status check)
+  // so admin accounts -- which carry isAdmin: true but planId: 'free' --
+  // are correctly treated as premium here too.
+  const isPremium = useSubscriptionStore((s) => s.isPremium());
 
   const activePage = document?.pages[activePageIndex];
   const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);

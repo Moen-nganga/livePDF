@@ -65,6 +65,23 @@ const DESIRED_GAP_FONT_RATIO = 0.35;
 // same line -- e.g. "Remote" following a job title -- is left alone.
 const SECONDARY_LABEL_FONT_RATIO = 0.85;
 
+// How close two same-line, same-size runs' natural gap needs to be (as a
+// fraction of font size) to be treated as fragments of one continuous
+// word/URL rather than two genuinely separate pieces of text -- see
+// mergeContiguousRuns. Deliberately much smaller than
+// DESIRED_GAP_FONT_RATIO above: that constant describes the *generous*
+// gap we'd like to preserve for intentionally-separate elements (a
+// project title and its tech-badge label); this one describes the
+// near-zero gap that means "no space was ever here at all."
+const MERGE_GAP_FONT_RATIO = 0.12;
+const MERGE_GAP_MIN = 0.5;
+
+// A run is only considered for merging with its line-neighbor when their
+// font sizes are within this many points of each other -- guards against
+// merging a run into a same-line but differently-sized label (e.g. a
+// tech-badge tag) that only coincidentally sits close by.
+const MERGE_FONT_SIZE_TOLERANCE = 0.6;
+
 // How close two runs' baselines need to be (in PDF points) to be treated
 // as sitting on the same visual line. Grouping by baseline rather than
 // by each run's own top-left y tolerates runs on the same line that use
@@ -118,7 +135,16 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
     // their bounding boxes both for the TextObjects themselves and for
     // knowing what to paint over on the raster canvas below.
     const textContent = await pdfPage.getTextContent();
-    const runs = extractTextRuns(textContent, unscaledViewport);
+    let runs = extractTextRuns(textContent, unscaledViewport);
+
+    // Merge runs that are really just fragments of one continuous word or
+    // URL (e.g. a hyperlink annotation covering only part of "moe" in
+    // "moenganga.com", or the underline formatting on part of a URL)
+    // split apart because of a formatting/annotation boundary mid-word,
+    // not because there's an actual space there. See the function
+    // comment for why this has to happen before any width capping or
+    // shrinking is computed, not as a fix applied on top of it.
+    runs = mergeContiguousRuns(runs);
 
     // Attach any link the PDF itself defines for a run (e.g. a URL in a
     // resume's contact/portfolio line) -- see extractLinkAnnotations and
@@ -207,19 +233,117 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
 
 // This run's width including WIDTH_PADDING_RATIO's wrap-avoidance margin,
 // capped to maxWidthOnLine when capLineNeighborWidths has set one (i.e.
-// there's another run to its right on the same line closer than the raw
-// padding would reach). Always at least the run's own raw measured
-// width, even if that's technically tighter than the gap to the next run
-// -- we never shrink below what pdf.js says the text itself occupies.
+// there's another run to its right on the same line). This is used as
+// PdfCanvas.tsx's *render target* -- the ceiling it shrinks a run's
+// fontSize to fit inside -- so, deliberately, it is NOT floored at the
+// run's own raw measured width. An earlier version floored it there to
+// avoid over-shrinking, but that let overlap straight through whenever
+// the real gap to the next run was smaller than the run's own raw width
+// -- which is the ordinary case for continuous prose where pdf.js splits
+// a sentence into separate runs at a mid-sentence styling change (e.g. a
+// bolded job title, or a differently-colored word), leaving only a
+// single space of real gap between two runs that are otherwise just
+// consecutive words. In that case the run's rendered text genuinely must
+// end up narrower than pdf.js's own measurement if our substitute font
+// renders it wider -- there's nowhere else for that extra width to go
+// without touching the next word. See eraseRunWidth below for the
+// separate (and still floored) width used just for painting over the
+// original glyphs, where over-covering is harmless.
 function paddedRunWidth(run: ExtractedRun): number {
   const padded = run.width + Math.max(run.width * WIDTH_PADDING_RATIO, MIN_WIDTH_PADDING);
   if (run.maxWidthOnLine === undefined) return padded;
-  return Math.max(run.width, Math.min(padded, run.maxWidthOnLine));
+  return Math.max(1, Math.min(padded, run.maxWidthOnLine));
+}
+
+// The width used purely for erasing the original rasterized glyphs --
+// always at least the run's own raw measured width (pdf.js's own
+// footprint for this text), regardless of how tight paddedRunWidth's
+// render-target got capped by a close neighbor. Erasing more than the
+// new editable text ends up occupying is harmless (it just paints extra
+// white, which blends into the page background); erasing less than the
+// original glyphs occupied leaves visible remnants behind the new text.
+function eraseRunWidth(run: ExtractedRun): number {
+  return Math.max(run.width, paddedRunWidth(run));
+}
+
+// Combines runs that sit on the same line, at essentially the same font
+// size, with next to no natural gap between them, into a single run --
+// i.e. fragments of one continuous word or URL that pdf.js reported as
+// separate text items only because of a formatting or link-annotation
+// boundary in the middle of it (a hyperlink covering part of "moe" in
+// "moenganga.com", part of a URL being underlined, etc.), not because
+// there was ever an actual space there.
+//
+// This has to run before capLineNeighborWidths and before per-run width
+// padding/shrinking, not as something layered on top of those: those
+// mechanisms work by finding *room* to fit a run into (a gap, or space
+// to shrink into) before its neighbor. A genuinely zero-gap boundary
+// gives them nothing to work with -- the substitute font's version of
+// the left fragment essentially never ends at exactly the same point the
+// original embedded font's did, so independently measuring, positioning,
+// and (if needed) shrinking each fragment can only ever get close, never
+// exact, and "close" still reads as visible overlap or a stray gap
+// mid-word. Merging first removes the seam entirely: there's only one
+// piece of text, measured and rendered as one piece, so there's nothing
+// left to misalign.
+//
+// Only non-rotated runs are considered, matching capLineNeighborWidths.
+function mergeContiguousRuns(runs: ExtractedRun[]): ExtractedRun[] {
+  const horizontal = runs.filter((r) => r.rotation === 0);
+  const rotated = runs.filter((r) => r.rotation !== 0);
+
+  const withBaseline = horizontal.map((run) => ({ run, baseline: run.y + run.fontSize }));
+  withBaseline.sort((a, b) => a.baseline - b.baseline || a.run.x - b.run.x);
+
+  const merged: ExtractedRun[] = [];
+
+  let lineStart = 0;
+  while (lineStart < withBaseline.length) {
+    let lineEnd = lineStart + 1;
+    while (
+      lineEnd < withBaseline.length &&
+      withBaseline[lineEnd].baseline - withBaseline[lineStart].baseline <= SAME_LINE_BASELINE_TOLERANCE
+    ) {
+      lineEnd++;
+    }
+
+    const line = withBaseline.slice(lineStart, lineEnd).map((entry) => entry.run);
+    line.sort((a, b) => a.x - b.x);
+
+    let current = line[0];
+    for (let i = 1; i < line.length; i++) {
+      const next = line[i];
+      const gap = next.x - (current.x + current.width);
+      const threshold = Math.max(MERGE_GAP_MIN, current.fontSize * MERGE_GAP_FONT_RATIO);
+      const sameSize = Math.abs(current.fontSize - next.fontSize) <= MERGE_FONT_SIZE_TOLERANCE;
+
+      if (gap <= threshold && sameSize) {
+        current = {
+          ...current,
+          text: current.text + next.text,
+          width: next.x + next.width - current.x,
+          height: Math.max(current.height, next.height),
+          // Prefer whichever fragment actually has a link -- a hyperlink
+          // annotation commonly covers only part of the merged word/URL.
+          link: current.link ?? next.link,
+        };
+      } else {
+        merged.push(current);
+        current = next;
+      }
+    }
+    merged.push(current);
+
+    lineStart = lineEnd;
+  }
+
+  return [...merged, ...rotated];
 }
 
 // Groups runs into visual lines (by baseline proximity) and, within each
 // line, caps every run's allowed padded width so it stops before the
-// next run to its right -- leaving MIN_INTER_RUN_GAP of breathing room.
+// next run to its right -- leaving a font-size-proportional gap of
+// breathing room (see DESIRED_GAP_FONT_RATIO).
 //
 // Without this, WIDTH_PADDING_RATIO's wrap-avoidance margin (needed
 // because our substituted web-safe font is often wider per character
@@ -235,6 +359,11 @@ function paddedRunWidth(run: ExtractedRun): number {
 // Only non-rotated runs are considered -- rotated text's "next run to
 // the right" isn't a meaningful concept, and rotated runs are rare
 // enough (stamps, sidebars) not to be worth the extra complexity here.
+//
+// Assumes mergeContiguousRuns (above) has already run, so any remaining
+// gap between two runs on a line is a genuine, intentional gap -- not a
+// mid-word formatting seam that should have been merged away instead of
+// capped/shrunk.
 function capLineNeighborWidths(runs: ExtractedRun[]): void {
   const horizontal = runs.filter((r) => r.rotation === 0);
 
@@ -289,7 +418,7 @@ function capLineNeighborWidths(runs: ExtractedRun[]): void {
 // on top of) and taller than its raw font-height (to catch ascenders
 // above and descenders below what a plain em-box would cover).
 function erasePaddedBounds(run: ExtractedRun): { x: number; y: number; width: number; height: number } {
-  const width = paddedRunWidth(run);
+  const width = eraseRunWidth(run);
   const ascent = run.fontSize * ERASE_ASCENT_RATIO;
   const descent = run.fontSize * ERASE_DESCENT_RATIO;
   const baseline = run.y + run.fontSize; // run.y is stored as the box's top edge, one fontHeight above baseline

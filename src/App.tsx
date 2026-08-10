@@ -117,13 +117,14 @@ export default function App() {
   // before this pass.
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const subscription = useSubscriptionStore((s) => s.subscription);
   // Same client-side-only caveat as Toolbar's signature gating -- this
   // just decides what the widget shows/allows in the UI. The real
   // enforcement is server-side, in POST /api/chat's own premium check.
-  const isPremium =
-    subscription?.status === 'active' &&
-    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
+  // Uses the store's isPremium() selector (not an inline plan/status
+  // check) so admin accounts -- which carry isAdmin: true but planId:
+  // 'free' -- are correctly treated as premium here too, matching the
+  // same fix applied in Toolbar.tsx.
+  const isPremium = useSubscriptionStore((s) => s.isPremium());
 
   // Show the landing screen on every fresh load, unless the URL contains a
   // share token (in which case go straight into the shared document).
