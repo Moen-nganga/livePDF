@@ -127,8 +127,11 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     // fires regardless of which path created the textbox -- whether via
     // the double-click-to-commit placeholder flow below, or via Fabric's
     // own built-in double-click-to-edit on an existing text object.
+    // Also fires for fabric.IText objects (the PDF-extracted text runs
+    // below), since this is a Canvas-level event tied to any editable
+    // text-type object, not something specific to Textbox.
     canvas.on('text:editing:exited', (e) => {
-      const obj = e.target as (fabric.Textbox & { id?: string }) | undefined;
+      const obj = e.target as (fabric.IText & { id?: string }) | undefined;
       if (!obj?.id) return;
       updateObject(page.id, obj.id, { text: obj.text ?? '' });
     });
@@ -137,6 +140,11 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     // The placeholder rect drawn while textPlacementActive is true (see
     // the dedicated effect below) is tagged with isTextPlaceholder so we
     // can tell it apart from a normal border/rect object here.
+    //
+    // This one intentionally stays a fabric.Textbox (not IText): the user
+    // drew a box of a specific width and reasonably expects freshly-typed
+    // text to wrap inside it, unlike the fixed single-line runs extracted
+    // from an uploaded PDF (see createFabricObject below).
     canvas.on('mouse:dblclick', (e) => {
       const target = e.target as (fabric.Object & { isTextPlaceholder?: boolean }) | undefined;
       if (!target?.isTextPlaceholder) return;
@@ -363,7 +371,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       const fabricObj = canvas
         .getObjects()
         .find((o) => (o as fabric.Object & { id?: string }).id === obj.id) as
-        | fabric.Textbox
+        | fabric.IText
         | undefined;
       if (!fabricObj) return;
 
@@ -478,9 +486,34 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
 
   switch (obj.type) {
     case 'text': {
-      const t = new fabric.Textbox(obj.text, {
+      // Using fabric.IText here rather than fabric.Textbox is deliberate.
+      // Every text object that comes out of pdfUpload.ts is a single line
+      // lifted directly from the PDF's own content stream, already
+      // positioned (x/y) exactly where that line sits on the page. The
+      // `width` stored on it is only pdfUpload.ts's *estimate* of how
+      // wide that line will render in our substituted web-safe font
+      // (padded 25% over pdf.js's measured width, since embedded PDF
+      // fonts are frequently narrower than Helvetica/Times/Courier,
+      // especially at bold weight) -- it is not a hard layout constraint.
+      //
+      // fabric.Textbox treats `width` as a hard wrap boundary and grows
+      // its own height whenever content doesn't fit -- so any case where
+      // the real substituted-font width exceeds that estimate (common for
+      // bold headings) caused the line to wrap and its box to grow
+      // taller, spilling down into the *next* line's fixed y-position
+      // from the original PDF and visually overlapping it. That's the
+      // "overlapping text" bug: it shows up right at heading/next-line
+      // boundaries because headings are exactly where the width estimate
+      // is most often wrong.
+      //
+      // fabric.IText never wraps -- it always renders at its natural
+      // single-line width -- so it can't grow into the line below no
+      // matter how far off the width estimate is. This matches what
+      // these objects actually are (independently positioned single
+      // lines, not a reflowable paragraph), and IText still supports
+      // double-click-to-edit like Textbox did.
+      const t = new fabric.IText(obj.text, {
         ...common,
-        width: obj.width,
         fontSize: obj.fontSize,
         fontFamily: obj.fontFamily,
         fill: obj.color,
@@ -490,6 +523,25 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
         underline: !!obj.link,
         textAlign: obj.align,
       });
+
+      // IText never wraps, which stops a too-wide run from growing taller
+      // and spilling onto the line below (see the long comment above).
+      // But without any width ceiling at all, a run that renders wider in
+      // our substituted font than pdf.js's original measurement can now
+      // run past where the original PDF line ended and collide *sideways*
+      // into whatever the *next* run on the same line is -- e.g. a job
+      // title butting up against a right-aligned "Remote | 2023–2026"
+      // that pdf.js extracted as its own separate run immediately after
+      // it. obj.width is pdfUpload.ts's padded estimate of how much
+      // horizontal room this run has before that next run starts, so if
+      // the actual rendered text is wider than that, squeeze it back down
+      // to fit -- scaleX only, so the font's height/size on screen is
+      // unaffected and this never re-introduces vertical wrapping.
+      const measuredWidth = t.width ?? 0;
+      if (measuredWidth > obj.width && measuredWidth > 0) {
+        t.set({ scaleX: obj.width / measuredWidth });
+      }
+
       (t as fabric.Object & { id?: string; link?: string }).id = obj.id;
       (t as fabric.Object & { id?: string; link?: string }).link = obj.link;
       return t;

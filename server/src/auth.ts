@@ -28,7 +28,11 @@ const ADMIN_EMAILS = new Set(
     .filter(Boolean)
 );
 
-function isAdminEmail(email: string): boolean {
+// Exported so any route that needs to know "is this user an admin" (not
+// just admin.ts's own routes) can reuse this exact same check instead of
+// re-implementing or duplicating the allowlist logic. index.ts's premium
+// feature gates rely on this to let admins through regardless of plan.
+export function isAdminEmail(email: string): boolean {
   return ADMIN_EMAILS.has(email.toLowerCase());
 }
 

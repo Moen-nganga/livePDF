@@ -23,8 +23,27 @@ const MIN_RUN_SIZE = 4;
 // "ghost text underneath" bug). 25% (with a minimum) comfortably covers
 // the typical metric difference between common embedded fonts and our
 // web-safe fallbacks.
+//
+// NOTE: this padding is sized purely to avoid *wrapping* -- it knows
+// nothing about what other runs sit on the same line. See
+// capLineNeighborWidths below, which trims this padding back down
+// whenever it would otherwise reach into a neighboring run's space (e.g.
+// a project title butting up against a tech-badge label right after it,
+// or a job title colliding with a right-aligned date range).
 const WIDTH_PADDING_RATIO = 0.25;
 const MIN_WIDTH_PADDING = 6;
+
+// Minimum visual breathing room (in PDF points) preserved between one
+// run's right edge and the next run's left edge when they sit on the
+// same line, so adjacent runs never render flush against each other.
+const MIN_INTER_RUN_GAP = 2;
+
+// How close two runs' baselines need to be (in PDF points) to be treated
+// as sitting on the same visual line. Grouping by baseline rather than
+// by each run's own top-left y tolerates runs on the same line that use
+// different font sizes (e.g. a bold heading next to a smaller gray
+// label), since their top edges differ but their baselines line up.
+const SAME_LINE_BASELINE_TOLERANCE = 2;
 
 // Extra vertical coverage added above/below each run's own font-height
 // when painting over the original rasterized text, expressed as a
@@ -74,6 +93,11 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
     const textContent = await pdfPage.getTextContent();
     const runs = extractTextRuns(textContent, unscaledViewport);
 
+    // Trim each run's width-padding allowance so it never reaches into a
+    // neighboring run's space on the same line -- see the constant
+    // comment above and the function itself for why this is needed.
+    capLineNeighborWidths(runs);
+
     // Now render the raster background at full quality.
     const renderViewport = pdfPage.getViewport({ scale: RENDER_SCALE });
     const canvas = window.document.createElement('canvas');
@@ -112,11 +136,12 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
       type: 'text',
       x: run.x,
       y: run.y,
-      // Padded, not pdf.js's raw measured width -- see WIDTH_PADDING_RATIO
-      // above. Without this, the substituted web-safe font can render
-      // wider than the original embedded font, causing Fabric's Textbox
-      // to auto-wrap and overflow into the object below it.
-      width: run.width + Math.max(run.width * WIDTH_PADDING_RATIO, MIN_WIDTH_PADDING),
+      // Padded (and neighbor-capped -- see capLineNeighborWidths), not
+      // pdf.js's raw measured width. See WIDTH_PADDING_RATIO above for
+      // why padding is needed at all; without the neighbor cap on top of
+      // it, that same padding is what caused adjacent runs on one line
+      // (e.g. a project title and its tech-badge label) to overlap.
+      width: paddedRunWidth(run),
       height: run.height,
       rotation: run.rotation,
       opacity: 1,
@@ -142,14 +167,75 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
   return pages;
 }
 
+// This run's width including WIDTH_PADDING_RATIO's wrap-avoidance margin,
+// capped to maxWidthOnLine when capLineNeighborWidths has set one (i.e.
+// there's another run to its right on the same line closer than the raw
+// padding would reach). Always at least the run's own raw measured
+// width, even if that's technically tighter than the gap to the next run
+// -- we never shrink below what pdf.js says the text itself occupies.
+function paddedRunWidth(run: ExtractedRun): number {
+  const padded = run.width + Math.max(run.width * WIDTH_PADDING_RATIO, MIN_WIDTH_PADDING);
+  if (run.maxWidthOnLine === undefined) return padded;
+  return Math.max(run.width, Math.min(padded, run.maxWidthOnLine));
+}
+
+// Groups runs into visual lines (by baseline proximity) and, within each
+// line, caps every run's allowed padded width so it stops before the
+// next run to its right -- leaving MIN_INTER_RUN_GAP of breathing room.
+//
+// Without this, WIDTH_PADDING_RATIO's wrap-avoidance margin (needed
+// because our substituted web-safe font is often wider per character
+// than the PDF's real embedded font -- see that constant's comment) has
+// no awareness of what else is on the same line. A short run like a
+// project title followed immediately by a small tech-badge label, or a
+// job title followed by a right-aligned date range, would get padded
+// with no regard for how little actual space separates it from that
+// next run -- and PdfCanvas.tsx's fabric.IText rendering (which never
+// wraps, by design, so it can't spill onto the line below) would then
+// happily render right through that neighboring text instead.
+//
+// Only non-rotated runs are considered -- rotated text's "next run to
+// the right" isn't a meaningful concept, and rotated runs are rare
+// enough (stamps, sidebars) not to be worth the extra complexity here.
+function capLineNeighborWidths(runs: ExtractedRun[]): void {
+  const horizontal = runs.filter((r) => r.rotation === 0);
+
+  const withBaseline = horizontal.map((run) => ({ run, baseline: run.y + run.fontSize }));
+  withBaseline.sort((a, b) => a.baseline - b.baseline || a.run.x - b.run.x);
+
+  let lineStart = 0;
+  while (lineStart < withBaseline.length) {
+    let lineEnd = lineStart + 1;
+    while (
+      lineEnd < withBaseline.length &&
+      withBaseline[lineEnd].baseline - withBaseline[lineStart].baseline <= SAME_LINE_BASELINE_TOLERANCE
+    ) {
+      lineEnd++;
+    }
+
+    const line = withBaseline.slice(lineStart, lineEnd).map((entry) => entry.run);
+    line.sort((a, b) => a.x - b.x);
+
+    for (let i = 0; i < line.length - 1; i++) {
+      const run = line[i];
+      const next = line[i + 1];
+      run.maxWidthOnLine = next.x - run.x - MIN_INTER_RUN_GAP;
+    }
+    // Last run on a line keeps maxWidthOnLine unset (unconstrained by a
+    // neighbor) -- nothing to its right to collide with.
+
+    lineStart = lineEnd;
+  }
+}
+
 // The enlarged rectangle we paint white over on the raster background for
-// a given run -- wider than the run's own measured width (same margin
-// used for the TextObject itself, so the erase always covers at least as
-// much as the new editable text sits on top of) and taller than its raw
-// font-height (to catch ascenders above and descenders below what a
-// plain em-box would cover).
+// a given run -- wider than the run's own measured width (same margin,
+// including the same neighbor cap, used for the TextObject itself, so
+// the erase always covers at least as much as the new editable text sits
+// on top of) and taller than its raw font-height (to catch ascenders
+// above and descenders below what a plain em-box would cover).
 function erasePaddedBounds(run: ExtractedRun): { x: number; y: number; width: number; height: number } {
-  const widthPad = Math.max(run.width * WIDTH_PADDING_RATIO, MIN_WIDTH_PADDING);
+  const width = paddedRunWidth(run);
   const ascent = run.fontSize * ERASE_ASCENT_RATIO;
   const descent = run.fontSize * ERASE_DESCENT_RATIO;
   const baseline = run.y + run.fontSize; // run.y is stored as the box's top edge, one fontHeight above baseline
@@ -157,7 +243,7 @@ function erasePaddedBounds(run: ExtractedRun): { x: number; y: number; width: nu
   return {
     x: run.x,
     y: baseline - ascent,
-    width: run.width + widthPad,
+    width,
     height: ascent + descent,
   };
 }
@@ -173,6 +259,11 @@ interface ExtractedRun {
   fontFamily: string;
   bold: boolean;
   italic: boolean;
+  // Set by capLineNeighborWidths for any run that has another run to its
+  // right on the same visual line -- the furthest paddedRunWidth is
+  // allowed to reach before it would start overlapping that neighbor.
+  // Undefined means unconstrained (last/only run on its line).
+  maxWidthOnLine?: number;
 }
 
 // Combines two PDF transform matrices, same formula pdf.js itself uses

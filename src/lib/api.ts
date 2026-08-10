@@ -44,6 +44,12 @@ export interface SubscriptionInfo {
   provider?: string | null;
   currentPeriodEnd?: string | null;
   cancelAtPeriodEnd?: boolean;
+  // Server-asserted flag mirroring AuthUser.isAdmin -- set by index.ts's
+  // /api/subscription from the same ADMIN_EMAILS check auth.ts uses
+  // elsewhere. Admins should be treated as premium in the UI even when
+  // planId/status say "free", since there's no real subscription behind
+  // an admin's access.
+  isAdmin?: boolean;
 }
 
 // Reflects the free-tier weekly document limit WITHOUT attempting a save --

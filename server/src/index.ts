@@ -4,7 +4,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { nanoid } from 'nanoid';
 import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
-import { authRouter, requireAuth, optionalAuth } from './auth.js';
+import { authRouter, requireAuth, optionalAuth, isAdminEmail } from './auth.js';
 import { adminRouter } from './admin.js';
 import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
 import { getChatReply, type ChatMessage } from './ai.js';
@@ -75,6 +75,18 @@ function requireDeviceId(req: express.Request, res: express.Response): string | 
   return deviceId;
 }
 
+// Admins get every feature everything a premium subscriber gets, with no
+// Stripe subscription required. Reuses auth.ts's isAdminEmail (the same
+// allowlist requireAdmin checks) instead of a second, possibly-divergent
+// definition of "admin". This is a real DB lookup, not trusting anything
+// the client claims, so it can't be spoofed the way a client-side isAdmin
+// flag could.
+async function isAdminUser(userId: string | undefined): Promise<boolean> {
+  if (!userId) return false;
+  const user = await usersRepo.getById(userId);
+  return !!user && isAdminEmail(user.email);
+}
+
 app.get('/api/documents', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -102,8 +114,8 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 // hit WITHOUT attempting a save -- needed so opening an old document (a
 // pure read) can be gated the same way creating a new one already is,
 // instead of only discovering the limit on the next autosave tick. Mirrors
-// the exact same countCreatedSince + premium check the PUT handler below
-// uses, so the two can never disagree.
+// the exact same countCreatedSince + premium/admin check the PUT handler
+// below uses, so the two can never disagree.
 app.get('/api/usage', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -111,8 +123,9 @@ app.get('/api/usage', async (req, res) => {
   const userId = (req as any).userId as string | undefined;
   const sub = userId ? await subscriptionsRepo.getByUserId(userId) : undefined;
   const isPremium = sub?.status === 'active';
+  const isAdmin = await isAdminUser(userId);
 
-  if (isPremium) {
+  if (isPremium || isAdmin) {
     return res.json({ used: 0, limit: null, limitReached: false });
   }
 
@@ -146,8 +159,9 @@ app.put('/api/documents/:id', async (req, res) => {
   if (!existing) {
     const sub = userId ? await subscriptionsRepo.getByUserId(userId) : undefined;
     const isPremium = sub?.status === 'active';
+    const isAdmin = await isAdminUser(userId);
 
-    if (!isPremium) {
+    if (!isPremium && !isAdmin) {
       const count = await documentsRepo.countCreatedSince(
         userId ? { userId } : { deviceId },
         Date.now() - WEEK_MS
@@ -268,8 +282,10 @@ app.put('/api/shared/:token', async (req, res) => {
 app.get('/api/subscription', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
   const sub = await subscriptionsRepo.getByUserId(userId);
+  const isAdmin = await isAdminUser(userId);
+
   if (!sub) {
-    return res.json({ planId: 'free', status: 'none' });
+    return res.json({ planId: 'free', status: 'none', isAdmin });
   }
   res.json({
     planId: sub.status === 'active' ? sub.plan_id : 'free',
@@ -277,6 +293,7 @@ app.get('/api/subscription', requireAuth, async (req, res) => {
     provider: sub.provider,
     currentPeriodEnd: sub.current_period_end,
     cancelAtPeriodEnd: sub.cancel_at_period_end,
+    isAdmin,
   });
 });
 
@@ -302,12 +319,14 @@ app.post('/api/checkout/stripe', requireAuth, async (req, res) => {
 // Gated server-side, unlike the client-only checks on things like
 // Signatures -- every call here costs a real request against Gemini's
 // free-tier daily quota, so this one needs actual enforcement, not just a
-// hidden UI element a determined user could bypass.
+// hidden UI element a determined user could bypass. Admins bypass the
+// premium requirement the same way they bypass the doc limit above.
 app.post('/api/chat', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
   const sub = await subscriptionsRepo.getByUserId(userId);
   const isPremium = sub?.status === 'active' && (sub.plan_id === 'pro_monthly' || sub.plan_id === 'pro_yearly');
-  if (!isPremium) {
+  const isAdmin = await isAdminUser(userId);
+  if (!isPremium && !isAdmin) {
     return res.status(403).json({ error: 'upgrade_required' });
   }
 
