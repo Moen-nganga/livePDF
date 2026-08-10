@@ -36,6 +36,83 @@ function lineNumberAt(text: string, charIndex: number): number {
   return text.slice(0, charIndex).split('\n').length;
 }
 
+// How close two text lines' y-positions (in page points) need to be to
+// count as sitting on the same visual line on the page -- used to group
+// separate TextObjects that happen to share a line (e.g. a job title and
+// a right-aligned date range, or a project title and its tech-badge
+// label) under one page-line number, rather than each getting counted
+// as its own line.
+//
+// This matters most for PDF uploads: pdfFileToPages creates one
+// TextObject per extracted PDF text run, so a page's text is usually
+// spread across many single-line objects rather than one multi-line
+// object. lineNumberAt above only counts '\n' characters *within* a
+// single object's own text -- since most of those objects contain no
+// '\n' at all, it always reports "line 1" for every single one of them,
+// regardless of where they actually sit on the page. That's the "every
+// result says Line 1" bug: it's counting the wrong thing. What the user
+// wants when they see "Page 1, Line 4" is which visual line on the
+// page they'd need to look at, not which line inside one particular
+// text box -- so line numbers need to come from vertical position,
+// spanning all the text on the page, not from each object in isolation.
+const PAGE_LINE_GROUP_TOLERANCE = 4;
+
+interface PageLineEntry {
+  objectId: string;
+  internalIndex: number;
+  y: number;
+}
+
+// Builds a map from each text object's id to an array of page-wide line
+// numbers, one per internal line of that object's own text (index 0 =
+// the object's first line, index 1 = its second, etc. -- relevant for
+// manually-typed multi-line text boxes; PDF-extracted objects normally
+// only have a single internal line, so their array only has index 0).
+//
+// Works by turning every line of every text object on the page into a y-
+// position (the object's own y, offset by however many internal lines
+// come before it), sorting all of those page-wide by y, and grouping
+// entries whose y falls within PAGE_LINE_GROUP_TOLERANCE of each other
+// into the same page-line number -- so text that's genuinely side-by-side
+// on one visual line (a title + a badge, a role + a date range) collapses
+// into a single line number instead of each object inflating the count.
+function computePageLineNumbers(objects: PageObject[]): Map<string, number[]> {
+  const entries: PageLineEntry[] = [];
+
+  for (const obj of objects) {
+    if (obj.type !== 'text') continue;
+    const lines = obj.text.split('\n');
+    // Approximate the vertical space each internal line of this object
+    // occupies -- for the common single-line case (nearly all PDF-
+    // extracted runs) this is just the object's own height; for a
+    // manually-typed multi-line box it divides the box's height evenly
+    // across its lines, which is close enough to rank lines in the right
+    // order relative to the rest of the page's text.
+    const lineHeight = lines.length > 1 ? obj.height / lines.length : obj.height;
+    lines.forEach((_, internalIndex) => {
+      entries.push({ objectId: obj.id, internalIndex, y: obj.y + internalIndex * lineHeight });
+    });
+  }
+
+  entries.sort((a, b) => a.y - b.y);
+
+  const map = new Map<string, number[]>();
+  let lineNumber = 0;
+  let lastY: number | null = null;
+
+  for (const entry of entries) {
+    if (lastY === null || entry.y - lastY > PAGE_LINE_GROUP_TOLERANCE) {
+      lineNumber++;
+      lastY = entry.y;
+    }
+    const arr = map.get(entry.objectId) ?? [];
+    arr[entry.internalIndex] = lineNumber;
+    map.set(entry.objectId, arr);
+  }
+
+  return map;
+}
+
 interface ToolbarProps {
   /** Called when a free-tier user tries to use a premium-gated tool and clicks "Upgrade" in the resulting prompt. */
   onRequirePremium?: () => void;
@@ -279,6 +356,13 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       // real perf cost to awaiting one page at a time.
       for (let pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
         const page = document.pages[pageIndex];
+        // Page-wide line numbers, keyed by object id -- see
+        // computePageLineNumbers above for why this has to be derived
+        // from vertical position across the whole page rather than from
+        // each text object's own '\n' count. Computed once per page
+        // (not per object) since it needs every text object on the page
+        // to rank lines correctly relative to each other.
+        const pageLineNumbers = computePageLineNumbers(page.objects);
         for (const obj of page.objects) {
           if (obj.type !== 'text') continue;
           const misspelled = await findMisspelledWords(obj.text);
@@ -290,12 +374,17 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
             const key = m.word.toLowerCase();
             if (seen.has(key)) continue;
             seen.add(key);
+            // Which internal line of this object (0-indexed) the match
+            // falls on -- normally 0 for PDF-extracted single-line runs,
+            // but can be >0 for a manually-typed multi-line text box.
+            const internalLine = lineNumberAt(obj.text, m.index) - 1;
+            const line = pageLineNumbers.get(obj.id)?.[internalLine] ?? internalLine + 1;
             results.push({
               pageIndex,
               pageId: page.id,
               objectId: obj.id,
               word: m.word,
-              line: lineNumberAt(obj.text, m.index),
+              line,
             });
           }
         }

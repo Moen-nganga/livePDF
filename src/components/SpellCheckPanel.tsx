@@ -52,7 +52,7 @@ export function SpellCheckPanel({ loading, error, results, onJumpTo, onClose }: 
 
         {!loading && !error && results.length === 0 && (
           <p style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-            No spelling errors found. 🎉
+            NO SPELLING ERRORS FOUND.
           </p>
         )}
 
