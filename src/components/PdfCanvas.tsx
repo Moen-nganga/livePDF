@@ -512,34 +512,55 @@ function createFabricObject(obj: PageObject): fabric.Object | null {
       // these objects actually are (independently positioned single
       // lines, not a reflowable paragraph), and IText still supports
       // double-click-to-edit like Textbox did.
-      const t = new fabric.IText(obj.text, {
-        ...common,
-        fontSize: obj.fontSize,
-        fontFamily: obj.fontFamily,
-        fill: obj.color,
-        fontWeight: obj.bold ? 'bold' : 'normal',
-        fontStyle: obj.italic ? 'italic' : 'normal',
-        linethrough: obj.strikethrough,
-        underline: !!obj.link,
-        textAlign: obj.align,
-      });
+      // Every text object here is a single line lifted directly from the
+      // PDF's own content stream, positioned (x/y) exactly where that
+      // line sits on the page. `obj.width` (from pdfUpload.ts) is the
+      // ceiling for how wide this run is allowed to render -- enough to
+      // avoid wrapping, and capped so it doesn't reach into whatever run
+      // sits next to it on the same line (e.g. a tech-badge label right
+      // after a project title). It is not a hard truth about how wide
+      // the text actually is in our substituted web-safe font, since
+      // pdf.js measured the original embedded font, which is often
+      // narrower per character than Helvetica/Times/Courier.
+      //
+      // fabric.IText never wraps, so it can't grow taller and spill onto
+      // the line below (the original bug this whole approach fixes) --
+      // but if the substitute font renders wider than obj.width allows,
+      // something still has to give. An earlier version of this fit the
+      // text by applying scaleX to compress it horizontally after the
+      // fact -- but canvas doesn't re-render/re-hint glyphs under a
+      // non-uniform scale transform, it just stretches the already-drawn
+      // raster, which is what produced the blurry/smeared text. Shrinking
+      // fontSize instead re-renders the glyphs natively at the smaller
+      // size, so it stays crisp -- the trade-off is the run appears
+      // slightly smaller than its neighbors in that (rare, now that
+      // pdfUpload.ts's neighbor-gap cap is generous) case, which reads
+      // far better than either blur or overlap.
+      const buildIText = (fontSize: number) =>
+        new fabric.IText(obj.text, {
+          ...common,
+          fontSize,
+          fontFamily: obj.fontFamily,
+          fill: obj.color,
+          fontWeight: obj.bold ? 'bold' : 'normal',
+          fontStyle: obj.italic ? 'italic' : 'normal',
+          linethrough: obj.strikethrough,
+          underline: !!obj.link,
+          textAlign: obj.align,
+        });
 
-      // IText never wraps, which stops a too-wide run from growing taller
-      // and spilling onto the line below (see the long comment above).
-      // But without any width ceiling at all, a run that renders wider in
-      // our substituted font than pdf.js's original measurement can now
-      // run past where the original PDF line ended and collide *sideways*
-      // into whatever the *next* run on the same line is -- e.g. a job
-      // title butting up against a right-aligned "Remote | 2023–2026"
-      // that pdf.js extracted as its own separate run immediately after
-      // it. obj.width is pdfUpload.ts's padded estimate of how much
-      // horizontal room this run has before that next run starts, so if
-      // the actual rendered text is wider than that, squeeze it back down
-      // to fit -- scaleX only, so the font's height/size on screen is
-      // unaffected and this never re-introduces vertical wrapping.
+      let t = buildIText(obj.fontSize);
       const measuredWidth = t.width ?? 0;
       if (measuredWidth > obj.width && measuredWidth > 0) {
-        t.set({ scaleX: obj.width / measuredWidth });
+        // Floor how far we'll shrink a run -- an extreme mismatch (very
+        // long text in a very tight neighbor-capped box) should render a
+        // touch wide rather than become illegibly small.
+        const MIN_FONT_SHRINK_RATIO = 0.7;
+        const targetFontSize = Math.max(
+          obj.fontSize * MIN_FONT_SHRINK_RATIO,
+          obj.fontSize * (obj.width / measuredWidth)
+        );
+        t = buildIText(targetFontSize);
       }
 
       (t as fabric.Object & { id?: string; link?: string }).id = obj.id;

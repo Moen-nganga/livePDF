@@ -36,7 +36,34 @@ const MIN_WIDTH_PADDING = 6;
 // Minimum visual breathing room (in PDF points) preserved between one
 // run's right edge and the next run's left edge when they sit on the
 // same line, so adjacent runs never render flush against each other.
-const MIN_INTER_RUN_GAP = 2;
+// Used as a floor -- see DESIRED_GAP_FONT_RATIO below for the normal,
+// larger reserve that scales with each run's font size.
+const MIN_INTER_RUN_GAP = 4;
+
+// The gap we'd *like* to preserve before the next run on a line, as a
+// fraction of the run's own font size -- roughly the width of a real
+// space character at that size, which is what actually separated these
+// runs in the original PDF (e.g. "Project Name" + a tech-badge label, or
+// a job title + a right-aligned date range). An earlier version of this
+// cap only reserved MIN_INTER_RUN_GAP (a couple of points), which is
+// enough to stop text from literally touching but let our substitute
+// font -- which is very often wider per character than the PDF's real
+// embedded font -- eat almost all of the original visual gap, leaving
+// badge labels pressed right up against the preceding text instead of
+// comfortably spaced the way the source PDF actually laid them out.
+const DESIRED_GAP_FONT_RATIO = 0.35;
+
+// A run is treated as a secondary "label" following the main text on its
+// line -- e.g. a small tech-stack tag ("TypeScript", "HTML") right after
+// a project title -- when its font size is under this fraction of the
+// previous run's font size on the same line. Common resume/portfolio
+// styling italicizes exactly this kind of label even when the source
+// PDF's own font metadata doesn't mark it italic (pdf.js only reports
+// italic when the embedded font itself is an italic variant), so we
+// apply it as a deliberate visual heuristic rather than trusting the
+// PDF's font flag alone. Chosen conservatively so a same-size run on the
+// same line -- e.g. "Remote" following a job title -- is left alone.
+const SECONDARY_LABEL_FONT_RATIO = 0.85;
 
 // How close two runs' baselines need to be (in PDF points) to be treated
 // as sitting on the same visual line. Grouping by baseline rather than
@@ -92,6 +119,16 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
     // knowing what to paint over on the raster canvas below.
     const textContent = await pdfPage.getTextContent();
     const runs = extractTextRuns(textContent, unscaledViewport);
+
+    // Attach any link the PDF itself defines for a run (e.g. a URL in a
+    // resume's contact/portfolio line) -- see extractLinkAnnotations and
+    // findLinkForRun below. PdfCanvas.tsx already knows how to render a
+    // TextObject's `link` field (underlined, Ctrl/Cmd+click to open) --
+    // this was just never being populated for uploaded PDFs.
+    const linkRegions = await extractLinkAnnotations(pdfPage, unscaledViewport);
+    for (const run of runs) {
+      run.link = findLinkForRun(run, linkRegions);
+    }
 
     // Trim each run's width-padding allowance so it never reaches into a
     // neighboring run's space on the same line -- see the constant
@@ -150,9 +187,10 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
       fontFamily: run.fontFamily,
       color: '#111111', // pdf.js text content doesn't expose fill color; see note above
       bold: run.bold,
-      italic: run.italic,
+      italic: run.italic || !!run.forceItalic,
       strikethrough: false,
       align: 'left',
+      link: run.link,
     }));
 
     pages.push({
@@ -219,7 +257,23 @@ function capLineNeighborWidths(runs: ExtractedRun[]): void {
     for (let i = 0; i < line.length - 1; i++) {
       const run = line[i];
       const next = line[i + 1];
-      run.maxWidthOnLine = next.x - run.x - MIN_INTER_RUN_GAP;
+      const desiredGap = Math.max(MIN_INTER_RUN_GAP, run.fontSize * DESIRED_GAP_FONT_RATIO);
+      // Still floored at run.width itself (via paddedRunWidth's own
+      // Math.max) if the next run sits closer than desiredGap allows --
+      // e.g. two runs that were already tight in the source PDF -- so we
+      // never shrink a run below what pdf.js says its own text occupies.
+      run.maxWidthOnLine = next.x - run.x - desiredGap;
+
+      // A secondary run (i.e. i+1, since it follows something on this
+      // line) whose font is noticeably smaller than what precedes it --
+      // e.g. a small tech-stack tag after a project title -- reads as a
+      // label in common resume/portfolio styling and is conventionally
+      // italicized. A same-size neighbor (e.g. "Remote" after a job
+      // title, similar font size) is left untouched. See
+      // SECONDARY_LABEL_FONT_RATIO's comment for the reasoning.
+      if (next.fontSize < run.fontSize * SECONDARY_LABEL_FONT_RATIO) {
+        next.forceItalic = true;
+      }
     }
     // Last run on a line keeps maxWidthOnLine unset (unconstrained by a
     // neighbor) -- nothing to its right to collide with.
@@ -264,6 +318,14 @@ interface ExtractedRun {
   // allowed to reach before it would start overlapping that neighbor.
   // Undefined means unconstrained (last/only run on its line).
   maxWidthOnLine?: number;
+  // Set by capLineNeighborWidths when this run reads as a secondary
+  // label following larger text on the same line -- see
+  // SECONDARY_LABEL_FONT_RATIO. Combined with the PDF's own italic font
+  // flag (run.italic) when building the final TextObject.
+  forceItalic?: boolean;
+  // The URL of the link annotation this run falls inside, if any -- set
+  // by findLinkForRun using the regions from extractLinkAnnotations.
+  link?: string;
 }
 
 // Combines two PDF transform matrices, same formula pdf.js itself uses
@@ -349,4 +411,74 @@ function mapFont(
   const italic = /italic|oblique/.test(hint);
 
   return { fontFamily, bold, italic };
+}
+
+interface LinkRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  url: string;
+}
+
+// Reads this page's link annotations (the clickable rectangles a PDF
+// viewer would normally hotspot, e.g. over a "moen-portfolio.vercel.app"
+// line in a resume) and converts each one's rectangle into the same
+// top-left-origin point space our text runs use, via the same viewport
+// used for text positioning above -- annotation.rect comes in raw PDF
+// user space (bottom-left origin), so this conversion is required for
+// the coordinates to line up with run.x/run.y at all.
+//
+// Only external URI links carry a `url` -- internal links (e.g. "jump to
+// page 3") report a `dest` instead and are skipped, since there's
+// nowhere meaningful in our editor for those to navigate to.
+async function extractLinkAnnotations(
+  pdfPage: import('pdfjs-dist').PDFPageProxy,
+  viewport: import('pdfjs-dist').PageViewport
+): Promise<LinkRegion[]> {
+  const annotations = await pdfPage.getAnnotations();
+  const regions: LinkRegion[] = [];
+
+  for (const annotation of annotations as Array<{
+    subtype?: string;
+    url?: string;
+    rect?: number[];
+  }>) {
+    if (annotation.subtype !== 'Link' || !annotation.url || !annotation.rect) continue;
+
+    const [rx1, ry1, rx2, ry2] = viewport.convertToViewportRectangle(annotation.rect);
+    regions.push({
+      x: Math.min(rx1, rx2),
+      y: Math.min(ry1, ry2),
+      width: Math.abs(rx2 - rx1),
+      height: Math.abs(ry2 - ry1),
+      url: annotation.url,
+    });
+  }
+
+  return regions;
+}
+
+// Attributes a link region to a run when the run's own center point
+// falls inside that region's rectangle. PDF link annotations are
+// normally drawn to closely hug the text they cover, so this is enough
+// to correctly match without needing full rectangle-overlap math -- and
+// it naturally leaves a run untouched (returns undefined) when no link
+// region covers it, which is the common case for most of a page's text.
+function findLinkForRun(run: ExtractedRun, regions: LinkRegion[]): string | undefined {
+  const midX = run.x + run.width / 2;
+  const midY = run.y + run.height / 2;
+
+  for (const region of regions) {
+    if (
+      midX >= region.x &&
+      midX <= region.x + region.width &&
+      midY >= region.y &&
+      midY <= region.y + region.height
+    ) {
+      return region.url;
+    }
+  }
+
+  return undefined;
 }

@@ -7,11 +7,11 @@ import { sendMagicLinkEmail } from './email.js';
 const SESSION_COOKIE = 'session';
 const MAGIC_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes -- short-lived on purpose
 
-// Sliding window: a session lasts 14 days from its *last use*, not from
-// login. Every authenticated request pushes expires_at forward another 14
+// Sliding window: a session lasts 30 days from its *last use*, not from
+// login. Every authenticated request pushes expires_at forward another 30
 // days (see refreshSession below), so a user who visits regularly never
-// gets signed out -- only 14 days of total inactivity expires them.
-export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+// gets signed out -- only 30 days of total inactivity expires them.
+export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const isProd = process.env.NODE_ENV === 'production';
