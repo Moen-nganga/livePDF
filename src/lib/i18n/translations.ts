@@ -54,7 +54,7 @@ export const translations: Record<Locale, Record<string, string>> = {
 
     // Auth screen
     'auth.signIn': 'Sign in',
-    'auth.subtitle': "We'll email you a link to sign in — no password needed.",
+    'auth.subtitle': 'Sign in with your Google account to continue.',
     'auth.emailLabel': 'Email address',
     'auth.emailPlaceholder': 'you@example.com',
     'auth.sendLink': 'Send sign-in link',
@@ -204,7 +204,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'Inaunda…',
 
     'auth.signIn': 'Ingia',
-    'auth.subtitle': 'Tutakutumia kiungo cha kuingia kwa barua pepe — hakuna nenosiri linalohitajika.',
+    'auth.subtitle': 'Ingia kwa akaunti yako ya Google ili kuendelea.',
     'auth.emailLabel': 'Anwani ya barua pepe',
     'auth.emailPlaceholder': 'wewe@mfano.com',
     'auth.sendLink': 'Tuma kiungo cha kuingia',
@@ -346,7 +346,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'Création…',
 
     'auth.signIn': 'Se connecter',
-    'auth.subtitle': 'Nous vous enverrons un lien de connexion par e-mail — aucun mot de passe requis.',
+    'auth.subtitle': 'Connectez-vous avec votre compte Google pour continuer.',
     'auth.emailLabel': 'Adresse e-mail',
     'auth.emailPlaceholder': 'vous@exemple.com',
     'auth.sendLink': 'Envoyer le lien de connexion',
@@ -488,7 +488,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'Creando…',
 
     'auth.signIn': 'Iniciar sesión',
-    'auth.subtitle': 'Te enviaremos un enlace de acceso por correo — sin necesidad de contraseña.',
+    'auth.subtitle': 'Inicia sesión con tu cuenta de Google para continuar.',
     'auth.emailLabel': 'Correo electrónico',
     'auth.emailPlaceholder': 'tu@ejemplo.com',
     'auth.sendLink': 'Enviar enlace de acceso',
@@ -630,7 +630,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': '正在创建…',
 
     'auth.signIn': '登录',
-    'auth.subtitle': '我们会给您发送登录链接的邮件 — 无需密码。',
+    'auth.subtitle': '使用您的 Google 账户登录以继续。',
     'auth.emailLabel': '电子邮箱地址',
     'auth.emailPlaceholder': 'you@example.com',
     'auth.sendLink': '发送登录链接',
@@ -772,7 +772,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': '作成中…',
 
     'auth.signIn': 'サインイン',
-    'auth.subtitle': 'サインイン用のリンクをメールでお送りします — パスワードは不要です。',
+    'auth.subtitle': '続行するには Google アカウントでサインインしてください。',
     'auth.emailLabel': 'メールアドレス',
     'auth.emailPlaceholder': 'you@example.com',
     'auth.sendLink': 'サインインリンクを送信',
@@ -914,7 +914,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'Wird erstellt…',
 
     'auth.signIn': 'Anmelden',
-    'auth.subtitle': 'Wir senden Ihnen einen Anmeldelink per E-Mail — kein Passwort nötig.',
+    'auth.subtitle': 'Melden Sie sich mit Ihrem Google-Konto an, um fortzufahren.',
     'auth.emailLabel': 'E-Mail-Adresse',
     'auth.emailPlaceholder': 'sie@beispiel.de',
     'auth.sendLink': 'Anmeldelink senden',
@@ -1056,7 +1056,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'बनाया जा रहा है…',
 
     'auth.signIn': 'साइन इन करें',
-    'auth.subtitle': 'हम आपको साइन इन करने के लिए एक लिंक ईमेल करेंगे — किसी पासवर्ड की आवश्यकता नहीं।',
+    'auth.subtitle': 'जारी रखने के लिए अपने Google खाते से साइन इन करें।',
     'auth.emailLabel': 'ईमेल पता',
     'auth.emailPlaceholder': 'you@example.com',
     'auth.sendLink': 'साइन-इन लिंक भेजें',
@@ -1198,7 +1198,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'Создание…',
 
     'auth.signIn': 'Войти',
-    'auth.subtitle': 'Мы отправим вам ссылку для входа по электронной почте — пароль не требуется.',
+    'auth.subtitle': 'Войдите через аккаунт Google, чтобы продолжить.',
     'auth.emailLabel': 'Адрес электронной почты',
     'auth.emailPlaceholder': 'you@example.com',
     'auth.sendLink': 'Отправить ссылку для входа',
@@ -1340,7 +1340,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'landing.creating': 'جارٍ الإنشاء…',
 
     'auth.signIn': 'تسجيل الدخول',
-    'auth.subtitle': 'سنرسل لك رابط تسجيل الدخول عبر البريد الإلكتروني — لا حاجة لكلمة مرور.',
+    'auth.subtitle': 'سجّل الدخول بحساب Google الخاص بك للمتابعة.',
     'auth.emailLabel': 'البريد الإلكتروني',
     'auth.emailPlaceholder': 'you@example.com',
     'auth.sendLink': 'إرسال رابط تسجيل الدخول',
