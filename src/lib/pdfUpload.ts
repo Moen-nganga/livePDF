@@ -49,8 +49,18 @@ const WORD_GAP_MIN = 0.5;
 // absolute point value and a per-font-size multiple, so bigger headings
 // (which can have proportionally bigger legitimate gaps) aren't split
 // incorrectly.
+//
+// NOTE: this is now a secondary/fallback signal. The primary defense
+// against fusing columns together is computeGlobalGutters below -- see
+// its comment for why a per-line gap size alone isn't reliable.
 const MAX_MERGE_GAP_ABSOLUTE = 60;
 const MAX_MERGE_GAP_FONT_RATIO = 4;
+
+// How wide a horizontal strip of the page has to be -- and never once
+// touched by any text run, anywhere on the page -- before we trust it as
+// a genuine column gutter rather than coincidental whitespace. See
+// computeGlobalGutters for the full reasoning.
+const MIN_GUTTER_WIDTH = 14;
 
 // Extra vertical coverage added above/below a line's own font-height when
 // painting over the original rasterized text, expressed as a fraction of
@@ -60,6 +70,18 @@ const MAX_MERGE_GAP_FONT_RATIO = 4;
 // underneath the new editable text.
 const ERASE_ASCENT_RATIO = 1.3;
 const ERASE_DESCENT_RATIO = 0.35;
+
+// Fill color for ordinary extracted text. pdf.js text content doesn't
+// expose the original fill color, so every non-link run gets this flat
+// near-black.
+const TEXT_COLOR = '#111111';
+
+// Fill color for lines that carry a link (see findLinkForRun). Paired
+// with PdfCanvas.tsx's `underline: !!obj.link`, this is what makes a
+// link visually read as a link -- underlined AND a distinct light-blue
+// color -- rather than just underlined near-black text that's easy to
+// mistake for a stray formatting artifact.
+const LINK_COLOR = '#1a73e8';
 
 /**
  * Reads an uploaded PDF file and converts each page into a Page object.
@@ -90,6 +112,12 @@ const ERASE_DESCENT_RATIO = 0.35;
  * font style, so a line that mixes styles (e.g. a link in the middle of
  * a sentence, rather than on its own line) will render uniformly in the
  * first run's style rather than preserving the mid-line styling change.
+ *
+ * Multi-column layouts (e.g. a resume with a sidebar) add a second
+ * wrinkle: two runs that happen to share a baseline can belong to two
+ * completely different columns rather than the same sentence. See
+ * computeGlobalGutters and mergeRunsPerLine for how that's detected and
+ * kept from being fused into nonsense like "MongoDB) Highly experienced...".
  */
 export async function pdfFileToPages(file: File): Promise<Page[]> {
   const arrayBuffer = await file.arrayBuffer();
@@ -122,15 +150,29 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
       run.link = findLinkForRun(run, linkRegions);
     }
 
+    // Work out this page's real column structure -- if it has one --
+    // BEFORE any merging happens, from every raw run on the page. See
+    // computeGlobalGutters's own comment for why this has to run first
+    // and be page-wide rather than a per-line gap check.
+    const gutters = computeGlobalGutters(rawRuns);
+
     // Now collapse every line down to a single run -- see the function
-    // comment and the doc-comment above for why.
-    const lines = mergeRunsPerLine(rawRuns);
+    // comment and the doc-comment above for why. Column gutters detected
+    // above are treated as hard boundaries here: two runs never get
+    // fused together across one, no matter how narrow their gap looks on
+    // that particular row.
+    const lines = mergeRunsPerLine(rawRuns, gutters);
 
     // Hard guarantee, independent of the merge logic above: no line's
     // rendered box is allowed to reach into where any other nearby
     // content on the page starts. See capWidthsAgainstNearbyContent's own
     // comment for why this check isn't limited to same-baseline
-    // neighbors the way merging is.
+    // neighbors the way merging is. This remains a second, independent
+    // layer -- it catches near-miss baseline alignment between columns
+    // that computeGlobalGutters's page-wide analysis wasn't needed for,
+    // it just stops the box from visually reaching too far, whereas the
+    // gutter check above stops the wrong text from being fused into one
+    // object in the first place.
     capWidthsAgainstNearbyContent(lines);
 
     // Render the raster background at full quality.
@@ -178,7 +220,7 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
       text: line.text,
       fontSize: line.fontSize,
       fontFamily: line.fontFamily,
-      color: '#111111', // pdf.js text content doesn't expose fill color; see note above
+      color: line.link ? LINK_COLOR : TEXT_COLOR,
       bold: line.bold,
       italic: line.italic,
       strikethrough: false,
@@ -212,12 +254,13 @@ function paddedWidth(line: ExtractedRun): number {
 }
 
 // Hard safety net, separate from and in addition to mergeRunsPerLine's
-// gap-based splitting: for every line, look at every OTHER line on the
-// page that starts to its right and vertically overlaps it even
-// partially (not just an exact same-baseline match), and cap this line's
-// width so it can never reach that neighbor's starting position.
+// gap-based and gutter-based splitting: for every line, look at every
+// OTHER line on the page that starts to its right and vertically
+// overlaps it even partially (not just an exact same-baseline match),
+// and cap this line's width so it can never reach that neighbor's
+// starting position.
 //
-// mergeRunsPerLine's gap heuristic only ever compares runs that share
+// mergeRunsPerLine's heuristics only ever compare runs that share
 // (almost) the exact same baseline -- which handles the common case
 // where sidebar and main-column headings happen to align, but doesn't
 // catch every case: a long line in one column and a short line in
@@ -258,6 +301,85 @@ function capWidthsAgainstNearbyContent(lines: ExtractedRun[]): void {
   }
 }
 
+// A horizontal (x-axis only) range in PDF point space.
+interface XInterval {
+  start: number;
+  end: number;
+}
+
+// Finds this page's real column gutters -- vertical strips of horizontal
+// space that NO text run anywhere on the page ever touches -- by
+// projecting every run's x-extent onto a single axis and looking at what's
+// left uncovered, page-wide.
+//
+// This exists because a per-line gap-size check (the original approach,
+// still kept below as MAX_MERGE_GAP_ABSOLUTE/MAX_MERGE_GAP_FONT_RATIO) is
+// fundamentally unreliable for detecting column boundaries: it only ever
+// looks at ONE row in isolation. A two-column resume's sidebar and main
+// column can easily have a narrower-than-usual local gap on any single
+// row -- e.g. a long sidebar line ("MySQL, PostgreSQL, MongoDB)") ending
+// close to where that row's main-column text happens to start -- and a
+// per-line check has no way to tell that apart from a legitimate,
+// if generous, same-line gap. That's exactly what caused sidebar and
+// main-column text to fuse into nonsense like "MongoDB) Highly
+// experienced...": the wrong decision only had to be made once, on one
+// row, for the columns to bleed into each other on that line.
+//
+// Looking at the WHOLE page fixes this: a genuine column gutter is, by
+// definition, a strip of x-space that's never used by text on either
+// side across every row of the document -- if it were ever crossed
+// anywhere, it wouldn't be a column boundary, it'd just be a line that
+// happens to span both "columns" (e.g. a full-width paragraph). That
+// makes gutters detectable independent of any single row's local gap
+// size, and immune to the coincidentally-narrow-row problem above.
+//
+// Only non-rotated runs are considered, matching mergeRunsPerLine's own
+// scope (rotated text like stamps/sidebars is handled separately and
+// never merged).
+function computeGlobalGutters(runs: ExtractedRun[]): XInterval[] {
+  const horizontal = runs.filter((r) => r.rotation === 0);
+  if (horizontal.length < 2) return [];
+
+  const occupied = horizontal
+    .map((r) => ({ start: r.x, end: r.x + r.width }))
+    .sort((a, b) => a.start - b.start);
+
+  // Merge overlapping/touching occupied x-ranges into a minimal set of
+  // "text lives here somewhere on the page" intervals.
+  const merged: XInterval[] = [];
+  for (const iv of occupied) {
+    const last = merged[merged.length - 1];
+    if (last && iv.start <= last.end) {
+      last.end = Math.max(last.end, iv.end);
+    } else {
+      merged.push({ ...iv });
+    }
+  }
+
+  // Whatever's left between consecutive occupied intervals -- if wide
+  // enough to plausibly be a deliberate gutter rather than ordinary
+  // kerning noise -- is a candidate column boundary.
+  const gutters: XInterval[] = [];
+  for (let i = 1; i < merged.length; i++) {
+    const start = merged[i - 1].end;
+    const end = merged[i].start;
+    if (end - start >= MIN_GUTTER_WIDTH) {
+      gutters.push({ start, end });
+    }
+  }
+
+  return gutters;
+}
+
+// True if the horizontal gap [gapStart, gapEnd) between two consecutive
+// same-baseline runs overlaps any detected column gutter -- meaning
+// those two runs sit on opposite sides of a real column boundary and
+// must never be fused into one line, regardless of how small this
+// particular gap looks.
+function gapCrossesGutter(gapStart: number, gapEnd: number, gutters: XInterval[]): boolean {
+  return gutters.some((g) => gapStart < g.end && g.start < gapEnd);
+}
+
 // Groups runs into visual lines (by baseline proximity, tolerating runs
 // on the same line that differ in font size) and collapses each line down
 // into a single run, reconstructing normal word spacing between the
@@ -285,7 +407,7 @@ function capWidthsAgainstNearbyContent(lines: ExtractedRun[]): void {
 // Only non-rotated runs are merged this way -- rotated text (stamps,
 // sidebars) is rare enough, and "same line" is a much fuzzier concept for
 // it, that each rotated run is kept as its own TextObject untouched.
-function mergeRunsPerLine(runs: ExtractedRun[]): ExtractedRun[] {
+function mergeRunsPerLine(runs: ExtractedRun[], gutters: XInterval[]): ExtractedRun[] {
   const horizontal = runs.filter((r) => r.rotation === 0);
   const rotated = runs.filter((r) => r.rotation !== 0);
 
@@ -307,31 +429,33 @@ function mergeRunsPerLine(runs: ExtractedRun[]): ExtractedRun[] {
     const line = withBaseline.slice(lineStart, lineEnd).map((entry) => entry.run);
     line.sort((a, b) => a.x - b.x);
 
-    // Split this baseline group into separate segments wherever the gap
-    // between two consecutive runs is too large to plausibly be an
-    // ordinary word or badge/date gap -- e.g. a sidebar heading and a
-    // main-column heading that happen to land on the same baseline in a
-    // multi-column layout, separated by the column gutter rather than by
-    // a normal amount of text spacing. Without this, every run sharing a
-    // baseline got fused into one line regardless of how far apart they
-    // actually were, which is what fused sidebar and main-column text
-    // together into nonsense like "DATABASES Full-Stack Developer...".
+    // Split this baseline group into separate segments wherever either:
+    //  (a) the gap between two consecutive runs crosses a page-wide
+    //      column gutter (see computeGlobalGutters) -- this is checked
+    //      FIRST and unconditionally, because it's the reliable signal;
+    //      or
+    //  (b) as a fallback for pages with no detected gutter structure
+    //      (e.g. genuinely single-column documents), the gap is just too
+    //      large to plausibly be an ordinary word or badge/date gap.
     //
-    // This is a size-based heuristic, not true detection of the PDF's
-    // actual drawn column-divider line (which would require parsing the
-    // page's vector drawing operations) -- but column gutters are, in
-    // practice, dramatically wider than any legitimate same-line gap
-    // (a word space, or even a generous badge/date-range gap), so a
-    // large-gap threshold reliably tells them apart.
+    // Without this, every run sharing a baseline got fused into one line
+    // regardless of how far apart they actually were, which is what
+    // fused sidebar and main-column text together into nonsense like
+    // "DATABASES Full-Stack Developer...".
     let segmentStart = 0;
     for (let i = 1; i <= line.length; i++) {
       const atEnd = i === line.length;
       if (!atEnd) {
         const prev = line[i - 1];
         const run = line[i];
-        const gap = run.x - (prev.x + prev.width);
+        const gapStart = prev.x + prev.width;
+        const gapEnd = run.x;
+
+        const crossesGutter = gapCrossesGutter(gapStart, gapEnd, gutters);
         const maxPlausibleGap = Math.max(MAX_MERGE_GAP_ABSOLUTE, prev.fontSize * MAX_MERGE_GAP_FONT_RATIO);
-        if (gap <= maxPlausibleGap) continue; // still plausibly the same line -- keep extending this segment
+        const gapTooLarge = gapEnd - gapStart > maxPlausibleGap;
+
+        if (!crossesGutter && !gapTooLarge) continue; // still plausibly the same line -- keep extending this segment
       }
 
       merged.push(buildMergedSegment(line.slice(segmentStart, i)));
