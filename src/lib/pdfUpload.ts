@@ -4,7 +4,25 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { nanoid } from 'nanoid';
 import type { Page, TextObject } from '../types/document';
 
-const RENDER_SCALE = 2; // render at 2x for crisper display/export quality
+// How much larger than the PDF's own point size to rasterize the page
+// background at. A flat 2x oversample looks sharp on a standard 1x
+// screen, but on a retina/high-DPI display (devicePixelRatio 2 or 3 --
+// most modern laptops and virtually all phones) the browser has to
+// stretch that same fixed-resolution bitmap further to fill the same
+// physical screen space, which is what reads as "blurry" -- specifically
+// in whatever part of the page is still raster background (images,
+// colored panels, borders, decorative graphics) rather than extracted,
+// vector-rendered text, which stays crisp at any zoom regardless of this
+// constant. Scaling with the actual screen's devicePixelRatio keeps the
+// background sharp on every display instead of only ever targeting 1x.
+// Capped so an unusually high devicePixelRatio doesn't balloon
+// rasterization time/memory for resolution beyond what's visible.
+const MIN_RENDER_SCALE = 2;
+const MAX_RENDER_SCALE = 4;
+const RENDER_SCALE = Math.min(
+  MAX_RENDER_SCALE,
+  Math.max(MIN_RENDER_SCALE, (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1) * 2)
+);
 
 // Minimum on-page footprint we'll accept for an extracted text run --
 // guards against stray zero-width/zero-height items some PDFs emit for
@@ -62,12 +80,15 @@ const MAX_MERGE_GAP_FONT_RATIO = 4;
 // computeGlobalGutters for the full reasoning.
 const MIN_GUTTER_WIDTH = 14;
 
-// Extra vertical coverage added above/below a line's own font-height when
-// painting over the original rasterized text, expressed as a fraction of
-// fontHeight. Typographic ascenders/descenders extend beyond the plain em
-// box, so erasing only exactly fontHeight tall left slivers of the
-// original glyphs (tops of tall letters, descenders on g/y/p) visible
-// underneath the new editable text.
+// Fallback extra vertical coverage above/below a line's own font-height
+// when painting over the original rasterized text, expressed as a
+// fraction of fontHeight -- used only if a browser's canvas TextMetrics
+// doesn't expose actualBoundingBoxAscent/Descent (see measureTextMetrics
+// and erasePaddedBounds, which use a real per-line measurement instead
+// whenever it's available). Typographic ascenders/descenders extend
+// beyond the plain em box, so erasing only exactly fontHeight tall left
+// slivers of the original glyphs (tops of tall letters, descenders on
+// g/y/p) visible underneath the new editable text.
 const ERASE_ASCENT_RATIO = 1.3;
 const ERASE_DESCENT_RATIO = 0.35;
 
@@ -429,22 +450,43 @@ function mergeRunsPerLine(runs: ExtractedRun[], gutters: XInterval[]): Extracted
     const line = withBaseline.slice(lineStart, lineEnd).map((entry) => entry.run);
     line.sort((a, b) => a.x - b.x);
 
-    // Split this baseline group into separate segments wherever either:
+    // Split this baseline group into separate segments wherever any of:
     //  (a) the gap between two consecutive runs crosses a page-wide
-    //      column gutter (see computeGlobalGutters) -- this is checked
-    //      FIRST and unconditionally, because it's the reliable signal;
-    //      or
+    //      column gutter (see computeGlobalGutters) -- checked first,
+    //      since it's the reliable signal; or
     //  (b) as a fallback for pages with no detected gutter structure
     //      (e.g. genuinely single-column documents), the gap is just too
-    //      large to plausibly be an ordinary word or badge/date gap.
+    //      large to plausibly be an ordinary word or badge/date gap; or
+    //  (c) the run's link status changes -- one run has a link and its
+    //      neighbor doesn't (or they have two different links).
     //
-    // Without this, every run sharing a baseline got fused into one line
-    // regardless of how far apart they actually were, which is what
+    // (c) matters because buildMergedSegment applies a single run's link
+    // (if any) to the ENTIRE merged segment -- see its own comment. If a
+    // line reads "A collection of development work — moen-portfolio.
+    // vercel.app" and only the URL itself is an actual link annotation,
+    // merging the whole line into one segment would make the descriptive
+    // sentence in front of it clickable and blue too, when only the URL
+    // should be. Splitting at the link boundary keeps the plain-text part
+    // and the linked part as two separate TextObjects, so only the
+    // actually-linked one gets the link's styling.
+    //
+    // Without (a)/(b), every run sharing a baseline got fused into one
+    // line regardless of how far apart they actually were, which is what
     // fused sidebar and main-column text together into nonsense like
     // "DATABASES Full-Stack Developer...".
+    //
+    // A (c)-only split (no gutter, gap not too large -- i.e. two chunks
+    // of what's really one continuous sentence, just forced apart to
+    // isolate the link) is flagged via chainedFromPrevious so the
+    // repositioning pass below can re-anchor the second piece to where
+    // the first piece will *actually* render, rather than trusting the
+    // small original PDF gap -- see that pass's own comment for why.
     let segmentStart = 0;
+    let pendingChain = false;
     for (let i = 1; i <= line.length; i++) {
       const atEnd = i === line.length;
+      let splitHere = atEnd;
+      let isChainSplit = false;
       if (!atEnd) {
         const prev = line[i - 1];
         const run = line[i];
@@ -454,18 +496,128 @@ function mergeRunsPerLine(runs: ExtractedRun[], gutters: XInterval[]): Extracted
         const crossesGutter = gapCrossesGutter(gapStart, gapEnd, gutters);
         const maxPlausibleGap = Math.max(MAX_MERGE_GAP_ABSOLUTE, prev.fontSize * MAX_MERGE_GAP_FONT_RATIO);
         const gapTooLarge = gapEnd - gapStart > maxPlausibleGap;
+        const linkChanges = prev.link !== run.link;
 
-        if (!crossesGutter && !gapTooLarge) continue; // still plausibly the same line -- keep extending this segment
+        splitHere = crossesGutter || gapTooLarge || linkChanges;
+        isChainSplit = linkChanges && !crossesGutter && !gapTooLarge;
       }
 
-      merged.push(buildMergedSegment(line.slice(segmentStart, i)));
+      if (!splitHere) continue; // still plausibly the same line -- keep extending this segment
+
+      const segment = buildMergedSegment(line.slice(segmentStart, i));
+      segment.chainedFromPrevious = pendingChain;
+      merged.push(segment);
+      pendingChain = isChainSplit;
       segmentStart = i;
     }
 
     lineStart = lineEnd;
   }
 
+  // Re-anchor every chainedFromPrevious segment (see above) to sit right
+  // after where the PRECEDING segment will actually render, rather than
+  // at its own original pdf.js x. This matters because the two segments
+  // were, before this link-driven split, one continuous piece of prose
+  // separated only by an ordinary word-sized gap in the original PDF's
+  // (often narrower) embedded font -- there's no column-sized headroom
+  // to absorb the fact that our substituted web-safe font frequently
+  // renders wider per character (see the file-level notes on
+  // WIDTH_PADDING_RATIO). Trusting the original small gap for BOTH
+  // segments' positions, like a genuine multi-column split can, was
+  // exactly what let the plain-text part visually run into/under the
+  // link part once its substitute-font width exceeded that gap.
+  // Measuring the preceding segment's real rendered width in the same
+  // font it'll actually be drawn in -- rather than pdf.js's own
+  // (possibly narrower) measurement -- and placing this segment right
+  // after it removes that gap entirely: there's no longer a fixed x for
+  // the second segment to be wrong about, it's always exactly as far
+  // right as the first segment actually reaches, plus the original PDF's
+  // own gap width preserved as the visual word-space between them.
+  for (let i = 1; i < merged.length; i++) {
+    const segment = merged[i];
+    if (!segment.chainedFromPrevious) continue;
+
+    const prev = merged[i - 1];
+    const prevRenderedWidth = measureTextWidth(prev.text, prev.fontSize, prev.fontFamily, prev.bold, prev.italic);
+    const originalGap = Math.max(segment.x - (prev.x + prev.width), 0);
+    segment.x = prev.x + prevRenderedWidth + originalGap;
+  }
+
   return [...merged, ...rotated];
+}
+
+// Measures how wide a piece of text will actually render, and how far its
+// glyphs actually extend above/below the baseline, using the exact same
+// (substituted, web-safe) font Fabric will draw it in -- via a throwaway
+// canvas 2D context. Canvas text measurement is the same mechanism
+// Fabric's own text rendering is built on, so this tracks real on-screen
+// geometry far more closely than either trusting pdf.js's measurement of
+// the original embedded font (measureTextWidth's caller), or a flat
+// fudge-factor guess at ascender/descender height (measureTextMetrics's
+// caller, erasePaddedBounds, replacing what used to be a fixed multiple
+// of font size). Every OTHER width in this file intentionally stays in
+// pdf.js's own measured space, since that's what PdfCanvas.tsx's
+// shrink-to-fit ceiling logic expects -- only the two callers below need
+// actual substitute-font geometry.
+let measureCtx: CanvasRenderingContext2D | null = null;
+
+function getMeasureCtx(): CanvasRenderingContext2D {
+  if (!measureCtx) {
+    const canvas = window.document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get canvas context for text measurement');
+    measureCtx = ctx;
+  }
+  return measureCtx;
+}
+
+function setMeasureFont(fontSize: number, fontFamily: string, bold: boolean, italic: boolean): void {
+  const style = italic ? 'italic' : 'normal';
+  const weight = bold ? 'bold' : 'normal';
+  getMeasureCtx().font = `${style} ${weight} ${fontSize}px "${fontFamily}"`;
+}
+
+function measureTextWidth(text: string, fontSize: number, fontFamily: string, bold: boolean, italic: boolean): number {
+  setMeasureFont(fontSize, fontFamily, bold, italic);
+  return getMeasureCtx().measureText(text).width;
+}
+
+// Extra headroom added on top of the exact measured glyph extents below,
+// to tolerate the small amount of cross-browser/font-hinting variance in
+// where exactly a font renders its glyph edges -- the measurement is
+// taken in this same browser session right before erasing, but isn't
+// guaranteed to be pixel-identical to how Fabric's own renderer draws it
+// a moment later.
+const ERASE_SAFETY_MARGIN_RATIO = 1.15;
+
+// Real measured ascent/descent (distance above/below the baseline the
+// text's glyphs actually reach) for a specific string in a specific
+// substitute font, via canvas TextMetrics.actualBoundingBox{Ascent,
+// Descent} -- the same values the browser itself computed to lay the
+// glyphs out, rather than a flat estimate. Returns null if the browser's
+// TextMetrics doesn't expose these (very old browsers), so the caller
+// can fall back to the fixed-ratio estimate.
+function measureTextMetrics(
+  text: string,
+  fontSize: number,
+  fontFamily: string,
+  bold: boolean,
+  italic: boolean
+): { ascent: number; descent: number } | null {
+  setMeasureFont(fontSize, fontFamily, bold, italic);
+  // measureText on an empty/whitespace-only string reports a degenerate
+  // (near-zero) bounding box -- fall back to a single space's own metrics
+  // isn't meaningfully better, so just let the caller's fixed-ratio path
+  // handle that case instead of pretending there's nothing to erase.
+  if (!text.trim()) return null;
+
+  const metrics = getMeasureCtx().measureText(text);
+  const ascent = metrics.actualBoundingBoxAscent;
+  const descent = metrics.actualBoundingBoxDescent;
+  if (typeof ascent !== 'number' || typeof descent !== 'number' || Number.isNaN(ascent) || Number.isNaN(descent)) {
+    return null;
+  }
+  return { ascent, descent };
 }
 
 // Combines a run of same-baseline, close-enough-together fragments (one
@@ -532,11 +684,21 @@ function buildMergedSegment(segment: ExtractedRun[]): ExtractedRun {
 // always covers at least as much as the new editable text sits on top of)
 // and taller than its raw font-height (to catch ascenders above and
 // descenders below what a plain em-box would cover).
+//
+// Ascent/descent are taken from a REAL measurement of this line's own
+// text in its actual substitute font (see measureTextMetrics) -- e.g. an
+// all-caps heading with no descenders gets a tight bottom edge, while a
+// line full of "gjpqy" gets the extra room it actually needs -- rather
+// than a flat ERASE_ASCENT_RATIO/ERASE_DESCENT_RATIO guess applied
+// uniformly to every line regardless of what it actually contains. The
+// fixed ratios are kept only as a fallback for the rare case a browser's
+// TextMetrics doesn't expose actualBoundingBox{Ascent,Descent}.
 function erasePaddedBounds(line: ExtractedRun): { x: number; y: number; width: number; height: number } {
   const width = paddedWidth(line);
   const eraseFontSize = line.eraseFontSize ?? line.fontSize;
-  const ascent = eraseFontSize * ERASE_ASCENT_RATIO;
-  const descent = eraseFontSize * ERASE_DESCENT_RATIO;
+  const measured = measureTextMetrics(line.text, eraseFontSize, line.fontFamily, line.bold, line.italic);
+  const ascent = measured ? measured.ascent * ERASE_SAFETY_MARGIN_RATIO : eraseFontSize * ERASE_ASCENT_RATIO;
+  const descent = measured ? measured.descent * ERASE_SAFETY_MARGIN_RATIO : eraseFontSize * ERASE_DESCENT_RATIO;
   const baseline = line.y + line.fontSize; // line.y is stored as the box's top edge, one fontHeight above baseline
 
   return {
@@ -570,6 +732,14 @@ interface ExtractedRun {
   // content on the page. Undefined means no nearby content was found to
   // its right.
   maxWidthNeighbor?: number;
+  // Set by mergeRunsPerLine when this segment was split off from the
+  // immediately preceding one purely because a link boundary was crossed
+  // (not a real column gutter, not an oversized gap) -- i.e. the two
+  // segments are really one continuous piece of prose that got split
+  // just to isolate the link's styling. Consumed by mergeRunsPerLine's
+  // own repositioning pass right after -- see that pass's comment for
+  // why these segments can't just trust their original pdf.js x.
+  chainedFromPrevious?: boolean;
 }
 
 // Combines two PDF transform matrices, same formula pdf.js itself uses

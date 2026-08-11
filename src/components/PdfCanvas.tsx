@@ -311,9 +311,19 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       canvas.getObjects().map((o) => (o as fabric.Object & { id?: string }).id)
     );
 
-    page.objects.forEach((obj) => {
-      if (existingIds.has(obj.id)) return;
+    const newObjects = page.objects.filter((obj) => !existingIds.has(obj.id));
 
+    // Only auto-select when exactly one new object showed up -- that's
+    // the genuine "user just placed/drew/dropped a single thing, select
+    // it so they can immediately move/resize/style it" case. A PDF
+    // import adds dozens of TextObjects in this same effect run, and
+    // calling setActiveObject once per object left whichever run
+    // happened to be extracted LAST sitting selected right after import,
+    // for no reason connected to anything the person did. Bulk adds now
+    // leave selection alone entirely.
+    const shouldAutoSelect = newObjects.length === 1;
+
+    newObjects.forEach((obj) => {
       if (obj.type === 'image') {
         fabric.FabricImage.fromURL(obj.src).then((img) => {
           img.set({
@@ -326,7 +336,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           });
           (img as fabric.Object & { id?: string }).id = obj.id;
           canvas.add(img);
-          canvas.setActiveObject(img);
+          if (shouldAutoSelect) canvas.setActiveObject(img);
           canvas.requestRenderAll();
         });
         return;
@@ -335,7 +345,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       const fabricObj = createFabricObject(obj);
       if (fabricObj) {
         canvas.add(fabricObj);
-        canvas.setActiveObject(fabricObj);
+        if (shouldAutoSelect) canvas.setActiveObject(fabricObj);
       }
     });
 

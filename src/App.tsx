@@ -457,6 +457,17 @@ export default function App() {
             onDiscard={() => {
               setShowUnsavedDialog(false);
               setShowLanding(true);
+              // Keep window.history.state in sync with React state here too --
+              // every other place that flips showLanding to true also calls
+              // pushScreen('landing') (see goHome's normal path just above).
+              // Without this, the browser's history entry stayed tagged
+              // screen: 'editor' even though the UI had moved to Landing. That
+              // stale tag then got silently carried into any new history entry
+              // pushed while on this "Landing" view (e.g. opening the Admin
+              // screen), so navigating back out of it landed back on an
+              // 'editor'-tagged entry with no document loaded -- stuck forever
+              // on the generic "editor.loading" placeholder below.
+              pushScreen('landing');
             }}
             onCancel={() => setShowUnsavedDialog(false)}
           />
