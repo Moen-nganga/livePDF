@@ -96,6 +96,12 @@ interface EditorState {
 
   // Pages
   addBlankPage: (sizeName: PageSizeName) => void;
+  /** Appends an already-built set of pages (e.g. every page extracted from
+   *  an uploaded PDF) onto the end of the current document, in one history
+   *  step, and jumps to the first newly added page — same "jump to what
+   *  was just added" convention as addBlankPage. Unlike loadDocument, this
+   *  does not touch any of the document's existing pages/content. */
+  addPages: (pages: Page[]) => void;
   removePage: (pageId: string) => void;
   duplicatePage: (pageId: string) => void;
   renamePage: (pageId: string, name: string) => void;
@@ -239,6 +245,34 @@ export const useEditorStore = create<EditorState>((set, get) => {
             updatedAt: Date.now(),
           },
           activePageIndex: state.document.pages.length, // jump to new page
+        };
+      })
+    ),
+
+    addPages: withHistory((pages: Page[]) =>
+      set((state) => {
+        if (!state.document || pages.length === 0) return state;
+
+        // A brand-new document always starts with a single blank page (see
+        // emptyPage/createBlankDocument) that the user hasn't touched yet.
+        // Appending after that placeholder is what made an uploaded PDF
+        // appear to "start from page 2" with page 1 left sitting there
+        // blank -- so if the document is still in that untouched state,
+        // replace the placeholder instead of appending after it.
+        const onlyPage = state.document.pages.length === 1 ? state.document.pages[0] : null;
+        const isUntouchedBlankPage =
+          !!onlyPage && onlyPage.objects.length === 0 && !onlyPage.backgroundImage && !onlyPage.name;
+
+        const newPages = isUntouchedBlankPage ? pages : [...state.document.pages, ...pages];
+        const firstNewIndex = isUntouchedBlankPage ? 0 : state.document.pages.length;
+
+        return {
+          document: {
+            ...state.document,
+            pages: newPages,
+            updatedAt: Date.now(),
+          },
+          activePageIndex: firstNewIndex, // jump to the first newly added page
         };
       })
     ),
