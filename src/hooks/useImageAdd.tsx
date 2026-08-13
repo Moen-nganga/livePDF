@@ -1,6 +1,5 @@
 import { useRef } from 'react';
 import { nanoid } from 'nanoid';
-import * as fabric from 'fabric';
 import { useEditorStore } from '../store/editorStore';
 import type { PageObject } from '../types/document';
 
@@ -35,10 +34,15 @@ export function useImageAdd() {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      fabric.FabricImage.fromURL(dataUrl).then((img) => {
+
+      // A native <img> replaces fabric.FabricImage.fromURL here purely to
+      // read the image's natural pixel dimensions before placing it -- no
+      // canvas rendering happens in this file anymore. PdfCanvas now draws
+      // the object as a real SVG <image> element directly from the store.
+      const img = new Image();
+
+      const place = (naturalW: number, naturalH: number) => {
         const maxDim = 300;
-        const naturalW = img.width ?? maxDim;
-        const naturalH = img.height ?? maxDim;
         const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
         const { x, y } = nextOffset(activePage.objects.length);
 
@@ -53,7 +57,18 @@ export function useImageAdd() {
           src: dataUrl,
         };
         addObject(activePage.id, obj);
-      });
+      };
+
+      img.onload = () => {
+        place(img.naturalWidth || 300, img.naturalHeight || 300);
+      };
+      img.onerror = () => {
+        // Rare (corrupt/unsupported file) -- fall back to a default box
+        // rather than silently dropping the add. The SVG <image> element
+        // will still render at whatever intrinsic size it resolves.
+        place(300, 300);
+      };
+      img.src = dataUrl;
     };
     reader.readAsDataURL(file);
     e.target.value = '';

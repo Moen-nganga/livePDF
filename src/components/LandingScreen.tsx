@@ -53,7 +53,14 @@ type LandingSub = 'auth' | 'upgrade' | 'privacy' | 'terms' | 'help' | 'admin' | 
 
 function pushLandingSub(sub: LandingSub) {
   if ((window.history.state?.landingSub ?? null) === sub) return; // already there
-  window.history.pushState({ ...window.history.state, landingSub: sub }, '', window.location.href);
+  // Explicitly assert screen: 'landing' here rather than spreading whatever
+  // happened to already be in history.state -- a landingSub is only ever
+  // pushed while the user is looking at Landing, so this entry should say
+  // so regardless of whether some other code path elsewhere left a stale
+  // screen value behind. (That's exactly what caused the "stuck on
+  // editor.loading after Admin -> Back" bug: a stale screen: 'editor' tag
+  // got silently carried forward into this push.)
+  window.history.pushState({ ...window.history.state, screen: 'landing', landingSub: sub }, '', window.location.href);
 }
 
 export function LandingScreen({ onEnter }: Props) {
@@ -122,9 +129,14 @@ export function LandingScreen({ onEnter }: Props) {
   // already put on this entry (screen: 'landing') rather than overwriting
   // it. This gives the very first pushLandingSub() call something real to
   // return to on back, the same reasoning as App.tsx's own initial tag.
+  // Also explicitly (re)asserts screen: 'landing' -- LandingScreen being
+  // mounted at all means the app considers itself on the Landing screen,
+  // so this entry should say so even if history.state.screen was somehow
+  // left stale by another code path (see pushLandingSub above for the bug
+  // this previously caused).
   useEffect(() => {
     if (!('landingSub' in (window.history.state ?? {}))) {
-      window.history.replaceState({ ...window.history.state, landingSub: null }, '', window.location.href);
+      window.history.replaceState({ ...window.history.state, screen: 'landing', landingSub: null }, '', window.location.href);
     }
   }, []);
 
