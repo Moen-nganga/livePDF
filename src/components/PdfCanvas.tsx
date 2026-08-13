@@ -3,8 +3,27 @@ import * as fabric from 'fabric';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import type { Page, PageObject } from '../types/document';
+import { GRID_SIZE, OVERLAP_PAD, snapToGrid, boundsOverlap, findFreeGridSlot, type Bounds } from '../lib/grid';
 
 export const ZOOM = 1; // 1 canvas px = 1 PDF point at 100%; toolbar can scale this later
+
+// Real (PDF-point-space) bounding box for a fabric object -- since the
+// canvas is only ever scaled via canvas.setZoom for responsive fit (see
+// the fitToContainer comment below), obj.left/top/getScaledWidth/
+// getScaledHeight are already in the same point space the store uses,
+// with no zoom-unwinding math needed.
+function fabricBounds(obj: fabric.Object): Bounds {
+  return {
+    x: obj.left ?? 0,
+    y: obj.top ?? 0,
+    width: obj.getScaledWidth(),
+    height: obj.getScaledHeight(),
+  };
+}
+
+function isTextLikeObject(obj: fabric.Object): boolean {
+  return obj.type === 'i-text' || obj.type === 'textbox';
+}
 
 interface Props {
   page: Page;
@@ -24,12 +43,25 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
 
   const drawingRef = useRef<{ rect: fabric.Rect; startX: number; startY: number } | null>(null);
 
+  // Last known bounds for each object that DIDN'T overlap another text
+  // object -- used by the object:modified handler below to snap a drop
+  // back to safety if the position the user just released it at would
+  // overlap something. Keyed by object id, populated both when an object
+  // is first added to the canvas and whenever a modify is accepted.
+  const lastGoodBoundsRef = useRef<Map<string, Bounds>>(new Map());
+
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
 
     const canvasEl = window.document.createElement('canvas');
     wrapper.appendChild(canvasEl);
+
+    // TEMP verification marker -- confirms in devtools that this exact
+    // build of PdfCanvas.tsx (with the grid/scaleY fixes) is the one
+    // actually running. Safe to delete once confirmed.
+    // eslint-disable-next-line no-console
+    console.log('[PdfCanvas] grid+scaleY-fix build loaded, page', page.id);
 
     const canvas = new fabric.Canvas(canvasEl, {
       width: page.width * ZOOM,
@@ -89,14 +121,114 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     });
     canvas.on('selection:cleared', () => setSelectedObjectId(null));
 
+    // Live grid-snap + overlap warning while an object is being dragged.
+    // This is feedback only -- it doesn't refuse to move the object, it
+    // just snaps its position to the invisible grid on every frame and,
+    // for text/link objects, shows a red outline when the current
+    // position would overlap another line of text. The actual guarantee
+    // (never letting an overlapping drop stick) happens in
+    // object:modified below, once the mouse is released.
+    canvas.on('object:moving', (e) => {
+      const obj = e.target as fabric.Object & { isTextPlaceholder?: boolean };
+      if (obj.isTextPlaceholder) return; // the "draw a text box" tool handles its own placement on mouse-up
+
+      obj.set({ left: snapToGrid(obj.left ?? 0), top: snapToGrid(obj.top ?? 0) });
+
+      if (isTextLikeObject(obj)) {
+        const candidate = fabricBounds(obj);
+        const overlapping = canvas
+          .getObjects()
+          .some((o) => o !== obj && isTextLikeObject(o) && boundsOverlap(candidate, fabricBounds(o), OVERLAP_PAD));
+        obj.set({ stroke: overlapping ? '#cc3333' : undefined, strokeWidth: overlapping ? 1 : 0 });
+      }
+    });
+
     canvas.on('object:modified', (e) => {
       const obj = e.target as fabric.Object & { id?: string };
       if (!obj?.id) return;
+
+      // Clear any red "would overlap" warning stroke set by object:moving
+      // above before deciding whether to keep or revert this drop.
+      obj.set({ stroke: undefined, strokeWidth: 0 });
+
+      // Snap the dropped position to the invisible grid -- keeps
+      // manually placed/moved objects landing on tidy, consistent
+      // coordinates instead of wherever the mouse happened to release.
+      obj.set({ left: snapToGrid(obj.left ?? 0), top: snapToGrid(obj.top ?? 0) });
+
+      if (isTextLikeObject(obj)) {
+        // Text objects must NEVER be resized via a scale transform.
+        // Fabric renders a scaled object by stretching/squishing the
+        // already-drawn glyphs rather than reflowing them -- so any
+        // leftover scaleY (e.g. from a previous corner-handle drag) kept
+        // compressing the box's *real*, correctly-growing height back
+        // down on screen every time more text wrapped or a newline was
+        // typed. That's what made new lines look like they were
+        // overlapping the ones above them (or like Enter "did nothing"):
+        // the line was really being added, just visually squashed flat.
+        // Locking this to 1 -- paired with `lockScalingY: true` set on
+        // the Textbox at creation below, so the corner handles can't
+        // reintroduce it -- lets `.height` alone represent the box's
+        // true size, which is how Fabric's own auto-growing Textbox is
+        // designed to be used.
+        if ((obj.scaleY ?? 1) !== 1) {
+          obj.set({ scaleY: 1 });
+        }
+
+        // Keep the box's right edge from ever passing the page's right
+        // edge -- this is what guarantees Fabric's own built-in word-wrap
+        // kicks in before any word could run off the page, rather than
+        // the box (and its un-wrapped tail of text) drifting past the
+        // visible canvas.
+        if (obj.type === 'textbox' && (obj.left ?? 0) + (obj.width ?? 0) > page.width) {
+          obj.set({ width: Math.max(GRID_SIZE, page.width - (obj.left ?? 0)) });
+        }
+      } else if (obj.width || obj.height) {
+        // Non-text objects (rects, ellipses, images) are fine to resize
+        // via scale -- just snap the resulting rendered size to the grid.
+        if (obj.width) {
+          const snappedW = Math.max(GRID_SIZE, snapToGrid((obj.width ?? 0) * (obj.scaleX ?? 1)));
+          obj.set({ scaleX: snappedW / obj.width });
+        }
+        if (obj.height) {
+          const snappedH = Math.max(GRID_SIZE, snapToGrid((obj.height ?? 0) * (obj.scaleY ?? 1)));
+          obj.set({ scaleY: snappedH / obj.height });
+        }
+      }
+      obj.setCoords();
+
+      // Text objects (including links, which render as text with `link`
+      // set -- see createFabricObject below) are the things we guarantee
+      // don't overlap each other. Shapes/highlights are frequently
+      // layered over text on purpose, so they're excluded from this check.
+      if (isTextLikeObject(obj)) {
+        const candidate = fabricBounds(obj);
+        const others = canvas
+          .getObjects()
+          .filter((o) => o !== obj && isTextLikeObject(o))
+          .map(fabricBounds);
+
+        if (others.some((o) => boundsOverlap(candidate, o, OVERLAP_PAD))) {
+          // Revert to the last position this object sat at without
+          // overlapping anything, rather than committing a spot that
+          // overlaps another line of text/a link.
+          const fallback = lastGoodBoundsRef.current.get(obj.id);
+          if (fallback) {
+            obj.set({ left: fallback.x, top: fallback.y });
+            obj.setCoords();
+          }
+        }
+      }
+
+      const finalBounds = fabricBounds(obj);
+      lastGoodBoundsRef.current.set(obj.id, finalBounds);
+      canvas.requestRenderAll();
+
       updateObject(page.id, obj.id, {
-        x: obj.left ?? 0,
-        y: obj.top ?? 0,
-        width: (obj.width ?? 0) * (obj.scaleX ?? 1),
-        height: (obj.height ?? 0) * (obj.scaleY ?? 1),
+        x: finalBounds.x,
+        y: finalBounds.y,
+        width: finalBounds.width,
+        height: finalBounds.height,
         rotation: obj.angle ?? 0,
       });
     });
@@ -133,7 +265,87 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     canvas.on('text:editing:exited', (e) => {
       const obj = e.target as (fabric.IText & { id?: string }) | undefined;
       if (!obj?.id) return;
-      updateObject(page.id, obj.id, { text: obj.text ?? '' });
+      // Persist fontSize/height alongside text -- the shrink-to-fit
+      // handler below (text:changed) can have adjusted both while the
+      // user was typing, and the store needs to reflect whatever
+      // actually ended up on screen, not just the final text content.
+      updateObject(page.id, obj.id, { text: obj.text ?? '', fontSize: obj.fontSize, height: obj.height });
+    });
+
+    // Fires on every keystroke while editing a Textbox (the freely-typed,
+    // wrapping kind created by the double-click placeholder flow below --
+    // IText objects, used for single-line PDF-extracted runs, are
+    // intentionally excluded, see createFabricObject's comment on why
+    // they never wrap).
+    //
+    // Fabric recalculates a Textbox's own wrapped lines and real `.height`
+    // automatically as content changes -- that recalculation is correct
+    // and doesn't need to be redone here. What DOES need handling every
+    // keystroke is guarding against exactly the scaleY-squish problem
+    // described in object:modified above: if this object has any
+    // leftover scaleY from an earlier resize, every newly wrapped or
+    // Enter-created line renders compressed toward the ones above it
+    // instead of appearing as a proper new line, which is what read as
+    // "pressing Enter doesn't do anything." Resetting it on every
+    // keystroke (not just on drop) means it's already correct while
+    // you're mid-edit, not just after you click away.
+    canvas.on('text:changed', (e) => {
+      const obj = e.target as fabric.Textbox & { id?: string };
+      if (!obj?.id || obj.type !== 'textbox') return;
+
+      if ((obj.scaleY ?? 1) !== 1) {
+        obj.set({ scaleY: 1 });
+      }
+
+      obj.dirty = true;
+      obj.setCoords();
+
+      // Push down every text/link object this box's growth now overlaps
+      // -- the gap this closes is between SEPARATE objects, not lines
+      // within this one box. A cover letter/resume built from several
+      // stacked text blocks (one per paragraph/section) has no mechanism
+      // anywhere else that reacts to one block growing taller as the
+      // user types into it -- the block below just sat at whatever y it
+      // was originally placed at, so a growing paragraph above it simply
+      // overlapped it once it got tall enough. This sweeps every pair of
+      // text objects top-to-bottom and shoves the lower one down by
+      // however much the upper one is currently overlapping it, and
+      // repeats a few passes so a push can itself cascade into whatever
+      // sits below THAT object, the way a word processor reflows
+      // everything below an edit point.
+      const textObjects = canvas.getObjects().filter(isTextLikeObject) as (fabric.Object & { id?: string })[];
+      for (let pass = 0; pass < 5; pass++) {
+        const sorted = [...textObjects].sort((a, b) => (a.top ?? 0) - (b.top ?? 0));
+        let pushedAny = false;
+
+        for (let i = 0; i < sorted.length; i++) {
+          for (let j = i + 1; j < sorted.length; j++) {
+            const upper = sorted[i];
+            const lower = sorted[j];
+
+            const upperLeft = upper.left ?? 0;
+            const upperRight = upperLeft + upper.getScaledWidth();
+            const lowerLeft = lower.left ?? 0;
+            const lowerRight = lowerLeft + lower.getScaledWidth();
+            const horizontallyOverlaps = upperLeft < lowerRight + OVERLAP_PAD && upperRight + OVERLAP_PAD > lowerLeft;
+            if (!horizontallyOverlaps) continue;
+
+            const upperBottom = (upper.top ?? 0) + upper.getScaledHeight();
+            const overlapAmount = upperBottom + OVERLAP_PAD - (lower.top ?? 0);
+            if (overlapAmount > 0) {
+              const newTop = snapToGrid((lower.top ?? 0) + overlapAmount);
+              lower.set({ top: newTop });
+              lower.setCoords();
+              if (lower.id) updateObject(page.id, lower.id, { y: newTop });
+              pushedAny = true;
+            }
+          }
+        }
+
+        if (!pushedAny) break;
+      }
+
+      canvas.renderAll();
     });
 
     // Commit a text placeholder into a real TextObject on double-click.
@@ -161,15 +373,36 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       const textbox = new fabric.Textbox('', {
         left,
         top,
-        width,
+        // Clamp so the box can't start out already extending past the
+        // page's right edge -- keeps Fabric's own word-wrap the thing
+        // that decides where a line breaks, rather than letting text run
+        // off the visible page.
+        width: Math.min(width, Math.max(GRID_SIZE, page.width - left)),
         angle,
         fontSize: 14,
         fontFamily: 'Helvetica',
         fill: '#111111',
         textAlign: 'left',
+        // Textbox already has its own special resize behavior for the
+        // side handles (dragging them changes `width`, which re-wraps
+        // the text -- exactly what we want). The top/bottom and corner
+        // handles have no such special handling and just apply a scaleY
+        // transform instead, which stretches/squishes the rendered
+        // glyphs rather than reflowing them -- the root cause of wrapped
+        // and Enter-created lines rendering overlapped. Locking scaleY
+        // means every resize handle either re-wraps correctly or does
+        // nothing, never squishes.
+        lockScalingY: true,
+        // Belt-and-suspenders alongside the text:changed handler's hard
+        // redraw -- a live-typed, constantly-resizing Textbox is exactly
+        // the kind of object where Fabric's render cache is most likely
+        // to serve a stale bitmap for a frame. It's cheap to skip caching
+        // for a single actively-edited text box.
+        objectCaching: false,
       });
       (textbox as fabric.Object & { id?: string }).id = id;
       canvas.add(textbox);
+      lastGoodBoundsRef.current.set(id, fabricBounds(textbox));
       canvas.setActiveObject(textbox);
       textbox.enterEditing();
       textbox.selectAll();
@@ -201,6 +434,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       resizeObserver.disconnect();
       canvas.dispose();
       fabricRef.current = null;
+      lastGoodBoundsRef.current.clear();
       wrapper.innerHTML = '';
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -258,6 +492,28 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         rect.set({ width: 160, height: 32 });
       }
 
+      // Snap the drawn box to the invisible grid, then make sure it
+      // doesn't land on top of any existing text/link -- findFreeGridSlot
+      // walks outward from where the user drew it until it finds a spot
+      // that clears every other text object on the page by OVERLAP_PAD,
+      // falling back to the drawn (snapped) position if the page is too
+      // crowded to find one nearby.
+      const existingText = canvas
+        .getObjects()
+        .filter(isTextLikeObject)
+        .map(fabricBounds);
+      const size = {
+        width: Math.max(GRID_SIZE, snapToGrid(rect.width ?? 160)),
+        height: Math.max(GRID_SIZE, snapToGrid(rect.height ?? 32)),
+      };
+      const placed = findFreeGridSlot(
+        { x: rect.left ?? 0, y: rect.top ?? 0 },
+        size,
+        existingText,
+        { width: page.width, height: page.height }
+      );
+      rect.set({ left: placed.x, top: placed.y, width: size.width, height: size.height });
+
       rect.set({ selectable: true, evented: true, hasControls: true, hasBorders: true });
       canvas.setActiveObject(rect);
       canvas.requestRenderAll();
@@ -278,7 +534,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       canvas.selection = !readOnly;
       canvas.defaultCursor = 'default';
     };
-  }, [textPlacementActive, readOnly, setTextPlacementActive]);
+  }, [textPlacementActive, readOnly, setTextPlacementActive, page.width, page.height]);
 
   useEffect(() => {
     const canvas = fabricRef.current;
@@ -336,6 +592,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           });
           (img as fabric.Object & { id?: string }).id = obj.id;
           canvas.add(img);
+          lastGoodBoundsRef.current.set(obj.id, fabricBounds(img));
           if (shouldAutoSelect) canvas.setActiveObject(img);
           canvas.requestRenderAll();
         });
@@ -345,6 +602,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       const fabricObj = createFabricObject(obj);
       if (fabricObj) {
         canvas.add(fabricObj);
+        lastGoodBoundsRef.current.set(obj.id, fabricBounds(fabricObj));
         if (shouldAutoSelect) canvas.setActiveObject(fabricObj);
       }
     });
@@ -359,7 +617,10 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     const idsInStore = new Set(page.objects.map((o) => o.id));
     canvas.getObjects().forEach((o) => {
       const id = (o as fabric.Object & { id?: string }).id;
-      if (id && !idsInStore.has(id)) canvas.remove(o);
+      if (id && !idsInStore.has(id)) {
+        canvas.remove(o);
+        lastGoodBoundsRef.current.delete(id);
+      }
     });
     canvas.requestRenderAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps

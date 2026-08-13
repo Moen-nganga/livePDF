@@ -3,19 +3,40 @@ import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import { useSubscriptionStore } from '../store/subscriptionStore';
 import { useI18nStore } from '../store/i18nStore';
-import type { PageObject, TextObject, RectObject, ImageObject } from '../types/document';
+import type { PageObject, TextObject, RectObject, ImageObject, Page } from '../types/document';
 import { WEB_SAFE_FONTS } from '../lib/fonts';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
 import { findMisspelledWords } from '../lib/spellcheck';
 import { SpellCheckPanel } from './SpellCheckPanel';
 import { SignatureDialog } from './SignatureDialog';
 import { PremiumRequiredDialog } from './PremiumRequiredDialog';
+import { GRID_SIZE, findFreeGridSlot, type Bounds } from '../lib/grid';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
+function snap(value: number): number {
+  return Math.round(value / GRID_SIZE) * GRID_SIZE;
+}
+
+// Grid-snapped staggered offset used as the *starting point* for new
+// objects -- each successive add nudges diagonally so a run of clicks
+// doesn't stack everything in an identical spot. This alone doesn't
+// guarantee no overlap (see textPlacementFor below, which does for text).
 function nextOffset(count: number): { x: number; y: number } {
   const step = 24;
-  return { x: 80 + (count % 8) * step, y: 80 + (count % 8) * step };
+  return { x: snap(80 + (count % 8) * step), y: snap(80 + (count % 8) * step) };
+}
+
+// For newly added text objects (currently just the "+ Date" stamp -- the
+// "+ Text" tool instead lets the user draw their own box directly on the
+// canvas, which does its own grid+overlap handling there in PdfCanvas.tsx)
+// find a grid-aligned spot that doesn't land on top of any text already on
+// the page, so a stamp can never overlap a line of text or a link.
+function textPlacementFor(page: Page, size: { width: number; height: number }): { x: number; y: number } {
+  const existingText: Bounds[] = page.objects
+    .filter((o): o is PageObject & { type: 'text' } => o.type === 'text')
+    .map((o) => ({ x: o.x, y: o.y, width: o.width, height: o.height }));
+  return findFreeGridSlot(nextOffset(page.objects.length), size, existingText, page);
 }
 
 interface SpellCheckResult {
@@ -263,19 +284,22 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
   function addDate() {
     if (!activePage) return;
-    const { x, y } = nextOffset(activePage.objects.length);
     const today = new Date().toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     });
+    // Grid-aligned and guaranteed not to land on top of existing text --
+    // see textPlacementFor's own comment.
+    const size = { width: 160, height: 32 };
+    const { x, y } = textPlacementFor(activePage, size);
     const obj: PageObject = {
       id: nanoid(),
       type: 'text',
       x,
       y,
-      width: 160,
-      height: 32,
+      width: size.width,
+      height: size.height,
       ...baseDefaults,
       text: today,
       fontSize: 14,
