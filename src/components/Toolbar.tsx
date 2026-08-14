@@ -1176,7 +1176,19 @@ function FontSizeDropdown({ value, disabled, onChange }: FontSizeDropdownProps) 
       style={{ width: 56 }}
     >
       {(!value || !FONT_SIZE_OPTIONS.includes(value)) && (
-        <option value="" disabled hidden>
+        // FIX: this option's value used to be "" (empty string). The
+        // <select> above is controlled by `value ?? ''` -- when the
+        // selected object's real font size (e.g. 13.9, straight from an
+        // extracted PDF) isn't one of the round numbers in
+        // FONT_SIZE_OPTIONS, that controlled value had nothing to match:
+        // this placeholder's own value was "" rather than the real
+        // number, so it didn't count as a match either. With no <option>
+        // matching, the browser silently fell back to selecting whichever
+        // <option> is first in the list -- FONT_SIZE_OPTIONS[0], i.e. 6 --
+        // which is why a 13.9pt line of extracted text was displaying as
+        // "6" in this dropdown. Giving this option the actual value makes
+        // it a real match, so the dropdown now shows the true size.
+        <option value={value ?? ''} disabled hidden>
           {value ?? t('toolbar.fontSize')}
         </option>
       )}

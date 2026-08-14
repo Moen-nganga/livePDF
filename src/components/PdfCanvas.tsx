@@ -675,6 +675,46 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
               setSelectedObjectId(t.id);
               beginInteraction(t, 'move', undefined, e.clientX, e.clientY);
             }}
+            onDoubleClick={(e) => {
+              // pointerdown above calls preventDefault() to stop a click
+              // from focusing the div (so a single click drags instead of
+              // editing) -- that also suppresses the browser's native
+              // double-click-to-focus/select-word behavior, so entering
+              // edit mode has to be done by hand here: focus the div, then
+              // drop the caret at the point that was actually clicked
+              // (falling back to the end of the text if the browser
+              // doesn't support caret-from-point).
+              if (readOnly) return;
+              e.stopPropagation();
+              const el = e.currentTarget;
+              setSelectedObjectId(t.id);
+              el.focus();
+
+              const sel = window.getSelection();
+              const docWithCaret = window.document as Document & {
+                caretRangeFromPoint?: (x: number, y: number) => Range | null;
+                caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+              };
+
+              let range: Range | null = null;
+              if (docWithCaret.caretRangeFromPoint) {
+                range = docWithCaret.caretRangeFromPoint(e.clientX, e.clientY);
+              } else if (docWithCaret.caretPositionFromPoint) {
+                const pos = docWithCaret.caretPositionFromPoint(e.clientX, e.clientY);
+                if (pos) {
+                  range = window.document.createRange();
+                  range.setStart(pos.offsetNode, pos.offset);
+                  range.collapse(true);
+                }
+              }
+              if (!range) {
+                range = window.document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false); // fall back to caret at the end
+              }
+              sel?.removeAllRanges();
+              sel?.addRange(range);
+            }}
             onInput={(e) => handleTextInput(t, e.currentTarget)}
             onBlur={(e) => handleTextBlur(t, e.currentTarget)}
             style={{
