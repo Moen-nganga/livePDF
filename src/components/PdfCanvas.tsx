@@ -39,8 +39,44 @@ function isTextObj(o: PageObject): o is Extract<PageObject, { type: 'text' }> {
   return o.type === 'text';
 }
 
+// -- link-paste detection --------------------------------------------
+// Same "is this a bare URL" + scheme-normalizing logic as Toolbar.tsx's
+// LinkButton, duplicated locally rather than shared since there's no
+// existing utils module both files pull from yet.
+const BARE_URL_RE = /^[a-z][a-z0-9+.-]*:\/\/\S+$|^[\w-]+(\.[\w-]+)+(\/\S*)?$/i;
+
+function isLikelyUrl(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  return BARE_URL_RE.test(trimmed);
+}
+
+function withUrlScheme(text: string): string {
+  const trimmed = text.trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 function objBounds(o: { x: number; y: number; width: number; height: number }): Bounds {
   return { x: o.x, y: o.y, width: o.width, height: o.height };
+}
+
+/** Keeps a box entirely within [0, page.width] x [0, page.height] -- shrinks
+ * it first if it's bigger than the page in either dimension (this can never
+ * actually happen from a resize, since resize deltas are already computed
+ * relative to the page, but it's a cheap safety net for anything created
+ * with a hardcoded size), then slides it back inside the page if any edge
+ * is past the boundary. This is the *prevention* layer: it stops a drag,
+ * resize, or newly-created object from ever being written to the store
+ * out of bounds in the first place. The <clipPath> on the SVG's object
+ * layer (see the render section below) is the *backstop* -- it guarantees
+ * nothing ever renders outside the page even if some bounds slipped through
+ * uncl amped (e.g. a text box whose content grows taller than expected). */
+function clampBoundsToPage<T extends Bounds>(b: T, page: { width: number; height: number }): T {
+  const width = Math.min(b.width, page.width);
+  const height = Math.min(b.height, page.height);
+  const x = Math.min(Math.max(b.x, 0), Math.max(0, page.width - width));
+  const y = Math.min(Math.max(b.y, 0), Math.max(0, page.height - height));
+  return { ...b, x, y, width, height };
 }
 
 /** Converts a pointer event's client coordinates into this SVG's own
@@ -100,6 +136,44 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
 
   const [interaction, setInteraction] = useState<Interaction | null>(null);
   const [drawing, setDrawing] = useState<Drawing | null>(null);
+
+  // -- fit the whole page inside whatever space is actually available -----
+  // A pure-CSS `width: min(100%, page.width)` + `aspect-ratio` only caps by
+  // the container's WIDTH -- it never checks whether the resulting height
+  // fits too. On a shorter/lower-resolution screen that let a page's full
+  // (correct, uncapped) width render, the page could still run taller than
+  // the visible area, forcing a scroll or a browser zoom-out to see the
+  // bottom of the page -- which is exactly what showed up as "the whole
+  // PDF isn't visible until I zoom." Fitting both axes at once -- and never
+  // upscaling past the page's real point size -- needs the actual pixel
+  // dimensions of the surrounding container, which only JS can measure.
+  const [fitSize, setFitSize] = useState({ width: page.width, height: page.height });
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const container = wrapper.parentElement ?? wrapper;
+
+    function recompute() {
+      const style = window.getComputedStyle(container);
+      const paddingX = parseFloat(style.paddingLeft || '0') + parseFloat(style.paddingRight || '0');
+      const paddingY = parseFloat(style.paddingTop || '0') + parseFloat(style.paddingBottom || '0');
+      const availableW = container.clientWidth - paddingX;
+      const availableH = container.clientHeight - paddingY;
+      if (availableW <= 0 || availableH <= 0) return;
+
+      // Never upscale past the page's real size -- only shrink to fit,
+      // same rule the old Fabric fitToContainer used, just now checking
+      // height as well as width.
+      const scale = Math.min(1, availableW / page.width, availableH / page.height);
+      setFitSize({ width: page.width * scale, height: page.height * scale });
+    }
+
+    recompute();
+    const resizeObserver = new ResizeObserver(recompute);
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [page.width, page.height]);
 
   // Per-object refs to the live contentEditable div, so input/blur handlers
   // and the resize-triggered remeasure effect can read real rendered size
@@ -222,6 +296,13 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           next = { ...cur.startBounds, rotation: Math.round(angle) };
         }
 
+        // Move/resize can never leave the page -- rotation is left alone
+        // here (rotating in place doesn't change x/y/width/height), any
+        // visual overflow a rotation causes is caught by the clip backstop.
+        if (cur.mode === 'move' || cur.mode === 'resize') {
+          next = { ...clampBoundsToPage(next, page), rotation: next.rotation };
+        }
+
         let overlapping = false;
         if (isTextObj(obj)) {
           const candidate = { x: next.x, y: next.y, width: next.width, height: next.height };
@@ -248,6 +329,8 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           const fallback = lastGoodBoundsRef.current.get(obj.id);
           if (fallback) final = { ...final, ...fallback };
         }
+
+        final = { ...clampBoundsToPage(final, page), rotation: final.rotation };
 
         lastGoodBoundsRef.current.set(obj.id, {
           x: final.x,
@@ -336,6 +419,42 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     updateObject(page.id, obj.id, { text });
   }
 
+  // Pasting into a text box always inserts plain text (never whatever rich
+  // HTML formatting the source page/app put on the clipboard, e.g. pasting
+  // from a Google Doc) -- and as a special case, pasting a bare URL into a
+  // box that's still empty turns that box into an actual link: styled and
+  // clickable, not just URL-shaped text. A URL pasted into a box that
+  // already has other text just inserts as plain text instead, since a
+  // text object only carries one `link` for its entire contents (same
+  // model PDF extraction uses -- see pdfUpload.ts) -- setting the whole
+  // box's link when the paste only replaces part of it would incorrectly
+  // make surrounding, unrelated text clickable too.
+  function handleTextPaste(obj: PageObject, el: HTMLDivElement, e: React.ClipboardEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text/plain');
+    if (!pasted) return;
+
+    const isEmpty = el.textContent === '' || el.textContent === null;
+    if (isEmpty && isLikelyUrl(pasted)) {
+      const url = withUrlScheme(pasted);
+      el.textContent = pasted.trim();
+      updateObject(page.id, obj.id, { text: pasted.trim(), link: url });
+      // Move the caret to the end of the inserted text, matching where a
+      // normal paste would leave it.
+      const range = window.document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      return;
+    }
+
+    // Plain-text insert at the current caret position -- fires a normal
+    // 'input' event, so handleTextInput's height/reflow logic still runs.
+    window.document.execCommand('insertText', false, pasted);
+  }
+
   // Remeasure height after a width-resize (re-wrapping can change how many
   // lines the text takes).
   useEffect(() => {
@@ -397,12 +516,13 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         height = Math.max(MIN_SIZE, snapToGrid(height));
 
         const existingText = page.objects.filter(isTextObj).map(objBounds);
-        const placed = findFreeGridSlot(
+        const placedRaw = findFreeGridSlot(
           { x: d.x, y: d.y },
           { width, height },
           existingText,
           { width: page.width, height: page.height }
         );
+        const placed = clampBoundsToPage({ ...placedRaw, width, height }, page);
 
         const id = nanoid();
         pendingFocusIdRef.current = id;
@@ -411,8 +531,8 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           type: 'text',
           x: placed.x,
           y: placed.y,
-          width,
-          height,
+          width: placed.width,
+          height: placed.height,
           rotation: 0,
           opacity: 1,
           text: '',
@@ -424,7 +544,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           strikethrough: false,
           align: 'left',
         } as PageObject);
-        lastGoodBoundsRef.current.set(id, { x: placed.x, y: placed.y, width, height });
+        lastGoodBoundsRef.current.set(id, { x: placed.x, y: placed.y, width: placed.width, height: placed.height });
         setSelectedObjectId(id);
         setTextPlacementActive(false);
         return null;
@@ -461,6 +581,65 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [page.id, selectedObjectId, removeObject, setSelectedObjectId]);
+
+  // ---------------------------------------------------------------------
+  // Paste a URL onto the canvas itself (nothing focused) -- drops a new,
+  // ready-made link text object rather than doing nothing. Pasting into an
+  // already-focused text box is handled locally by handleTextPaste above;
+  // this only fires when that's NOT the case, so a paste never gets
+  // handled twice.
+  // ---------------------------------------------------------------------
+
+  useEffect(() => {
+    if (readOnly) return;
+
+    function onPaste(e: ClipboardEvent) {
+      const active = window.document.activeElement;
+      const isEditingText = !!active && (active as HTMLElement).isContentEditable;
+      if (isEditingText) return; // handleTextPaste already owns this case
+
+      const pasted = e.clipboardData?.getData('text/plain');
+      if (!pasted || !isLikelyUrl(pasted)) return;
+
+      e.preventDefault();
+      const url = withUrlScheme(pasted);
+      const size = { width: Math.min(200, page.width), height: Math.min(24, page.height) };
+      const existingText = page.objects.filter(isTextObj).map(objBounds);
+      const placedRaw = findFreeGridSlot(
+        { x: 80, y: 80 },
+        size,
+        existingText,
+        { width: page.width, height: page.height }
+      );
+      const placed = clampBoundsToPage({ ...placedRaw, ...size }, page);
+
+      const id = nanoid();
+      addObject(page.id, {
+        id,
+        type: 'text',
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        height: placed.height,
+        rotation: 0,
+        opacity: 1,
+        text: pasted.trim(),
+        fontSize: 14,
+        fontFamily: 'Helvetica',
+        color: '#1a73e8',
+        bold: false,
+        italic: false,
+        strikethrough: false,
+        align: 'left',
+        link: url,
+      } as PageObject);
+      lastGoodBoundsRef.current.set(id, { x: placed.x, y: placed.y, width: placed.width, height: placed.height });
+      setSelectedObjectId(id);
+    }
+
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [readOnly, page.id, page.objects, page.width, page.height, addObject, setSelectedObjectId]);
 
   // ---------------------------------------------------------------------
   // Render
@@ -560,7 +739,6 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
             onPointerDown={commonPointerDown}
             onClick={() => !readOnly && setSelectedObjectId(obj.id)}
           />
-          {renderHandles(obj, bounds)}
         </g>
       );
     }
@@ -583,7 +761,6 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
             onPointerDown={commonPointerDown}
             onClick={() => !readOnly && setSelectedObjectId(obj.id)}
           />
-          {renderHandles(obj, bounds)}
         </g>
       );
     }
@@ -606,7 +783,6 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
             onPointerDown={commonPointerDown}
             onClick={() => !readOnly && setSelectedObjectId(obj.id)}
           />
-          {renderHandles(obj, bounds)}
         </g>
       );
     }
@@ -717,6 +893,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
             }}
             onInput={(e) => handleTextInput(t, e.currentTarget)}
             onBlur={(e) => handleTextBlur(t, e.currentTarget)}
+            onPaste={(e) => handleTextPaste(t, e.currentTarget, e)}
             style={{
               width: '100%',
               minHeight: MIN_SIZE,
@@ -738,17 +915,22 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
             }}
           />
         </foreignObject>
-        {renderHandles(t, bounds)}
       </g>
     );
   }
+
+  const selectedObj = page.objects.find((o) => o.id === selectedObjectId);
+  // Unique per page (not per object) since a clip only needs to describe
+  // the page rectangle once -- ids must be unique in the document, and
+  // page.id already is.
+  const clipId = `page-clip-${page.id}`;
 
   return (
     <div
       ref={wrapperRef}
       style={{
-        width: `min(100%, ${page.width}px)`,
-        aspectRatio: `${page.width} / ${page.height}`,
+        width: fitSize.width,
+        height: fitSize.height,
         boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
         background: '#fff',
       }}
@@ -763,6 +945,21 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           if (e.target === svgRef.current) setSelectedObjectId(null);
         }}
       >
+        <defs>
+          {/* The hard guarantee: no matter what bounds an object ends up
+              with -- a drag/resize that somehow slipped past the
+              clampBoundsToPage prevention above, a text box that grew
+              taller than the remaining space on the page while someone
+              was typing, a rotated shape whose corner swings past an
+              edge -- nothing inside the clipped group below can ever
+              paint outside this rectangle. This is what makes "text can
+              never go past the border" actually true rather than just
+              usually true. */}
+          <clipPath id={clipId}>
+            <rect x={0} y={0} width={page.width} height={page.height} />
+          </clipPath>
+        </defs>
+
         {page.backgroundImage && (
           <image
             href={page.backgroundImage}
@@ -775,7 +972,13 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           />
         )}
 
-        {page.objects.map(renderObject)}
+        <g clipPath={`url(#${clipId})`}>{page.objects.map(renderObject)}</g>
+
+        {/* Selection handles render outside the clip, deliberately --
+            otherwise a handle on an object sitting flush against an edge
+            (or the rotate handle, which sits above the object) would get
+            cropped away and become impossible to grab. */}
+        {selectedObj && !interaction && renderHandles(selectedObj, liveBoundsFor(selectedObj))}
 
         {drawing && (
           <rect
