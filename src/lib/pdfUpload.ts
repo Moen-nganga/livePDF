@@ -104,6 +104,33 @@ const TEXT_COLOR = '#111111';
 // mistake for a stray formatting artifact.
 const LINK_COLOR = '#1a73e8';
 
+// Many PDF generators draw list bullets/markers using a symbol font
+// (Wingdings, Symbol, etc.) whose glyphs live at Private-Use-Area code
+// points that mean "a round bullet" or "a square bullet" only in THAT
+// specific font. Our web-safe substitute fonts (Helvetica/Times/Courier)
+// have no glyph at those code points at all, so the browser renders a
+// "missing glyph" box (looks like a small hollow square, "tofu") instead
+// of the bullet the PDF author intended. This maps the handful of code
+// points that show up this way in practice onto real Unicode punctuation
+// that every web-safe font actually has a glyph for. Not exhaustive --
+// there's no general way to know what an arbitrary PDF's symbol font
+// intended for a given code point -- but covers the common cases.
+const GLYPH_SUBSTITUTIONS: Record<string, string> = {
+  '\uf0b7': '\u2022', // Wingdings solid round bullet -> •
+  '\uf0a7': '\u25aa', // Wingdings solid square bullet -> ▪
+  '\uf0d8': '\u2192', // Wingdings arrow -> →
+  '\uf06c': '\u2666', // Wingdings solid diamond -> ♦
+  '\uf0fc': '\u2713', // Wingdings checkmark -> ✓
+};
+
+function normalizeGlyphs(text: string): string {
+  let out = text;
+  for (const [from, to] of Object.entries(GLYPH_SUBSTITUTIONS)) {
+    if (out.includes(from)) out = out.split(from).join(to);
+  }
+  return out;
+}
+
 /**
  * Reads an uploaded PDF file and converts each page into a Page object.
  *
@@ -790,7 +817,9 @@ function extractTextRuns(
     const { fontFamily, bold, italic } = mapFont(style?.fontFamily, styleName);
 
     runs.push({
-      text: textItem.str,
+      // Normalize symbol-font bullet/marker glyphs to real Unicode
+      // punctuation -- see GLYPH_SUBSTITUTIONS's own comment for why.
+      text: normalizeGlyphs(textItem.str),
       x,
       y,
       width,

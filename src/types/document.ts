@@ -67,6 +67,15 @@ export interface RectObject extends BaseObject {
    * highlight draws exactly like any other rect with fill+opacity set.
    */
   isHighlight?: boolean;
+  /**
+   * Set on rects created via the "+ Underline" toolbar button — a thin,
+   * full-opacity rect meant to be dragged/resized under a line of text.
+   * Same reasoning as isHighlight: purely a UI/identification tag (so the
+   * toolbar knows to show active-tool state for it); rendering and PDF
+   * export don't check this at all, since an underline draws exactly like
+   * any other thin filled rect.
+   */
+  isUnderline?: boolean;
 }
 
 export interface EllipseObject extends BaseObject {

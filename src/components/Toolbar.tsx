@@ -14,6 +14,23 @@ import { GRID_SIZE, findFreeGridSlot, type Bounds } from '../lib/grid';
 
 const baseDefaults = { rotation: 0, opacity: 1 };
 
+// Compact sizing shared across all toolbar buttons so everything fits on
+// one line -- see Toolbar's outer container (flexWrap: 'nowrap') below.
+const COMPACT_BTN: React.CSSProperties = {
+  padding: '4px 8px',
+  fontSize: 11,
+  lineHeight: 1.2,
+  whiteSpace: 'nowrap',
+};
+
+const COMPACT_ICON_BTN: React.CSSProperties = {
+  width: 22,
+  height: 26,
+  padding: 0,
+  fontSize: 11,
+  lineHeight: 1,
+};
+
 function snap(value: number): number {
   return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
@@ -170,8 +187,10 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
     selectedObject?.type === 'rect' && !selectedObject.fill ? selectedObject : undefined;
   const selectedHighlight: RectObject | undefined =
     selectedObject?.type === 'rect' && selectedObject.isHighlight ? selectedObject : undefined;
+  const selectedUnderline: RectObject | undefined =
+    selectedObject?.type === 'rect' && selectedObject.isUnderline ? selectedObject : undefined;
 
-  type ToolKind = 'text' | 'rect' | 'border' | 'highlight' | 'ellipse' | 'image' | null;
+  type ToolKind = 'text' | 'rect' | 'border' | 'highlight' | 'underline' | 'ellipse' | 'image' | null;
   const activeTool: ToolKind = (() => {
     if (!selectedObject) return null;
     switch (selectedObject.type) {
@@ -179,6 +198,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         return 'text';
       case 'rect':
         if (selectedHighlight) return 'highlight';
+        if (selectedUnderline) return 'underline';
         return selectedBorder ? 'border' : 'rect';
       case 'ellipse':
         return 'ellipse';
@@ -191,6 +211,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
   const [borderDefaults, setBorderDefaults] = useState({ strokeWidth: 2, stroke: '#222222' });
   const [highlightDefaults, setHighlightDefaults] = useState({ fill: '#ffff00' });
+  const [underlineDefaults, setUnderlineDefaults] = useState({ thickness: 2 });
   const [watermarkDialogOpen, setWatermarkDialogOpen] = useState(false);
 
   const [spellCheckOpen, setSpellCheckOpen] = useState(false);
@@ -214,6 +235,11 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   function updateSelectedHighlight(patch: Partial<RectObject>) {
     if (!activePage || !selectedHighlight) return;
     updateObject(activePage.id, selectedHighlight.id, patch);
+  }
+
+  function updateSelectedUnderline(patch: Partial<RectObject>) {
+    if (!activePage || !selectedUnderline) return;
+    updateObject(activePage.id, selectedUnderline.id, patch);
   }
 
   function rotateSelected() {
@@ -328,6 +354,33 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       opacity: 0.4,
       fill: highlightDefaults.fill,
       stroke: '#000000',
+      strokeWidth: 0,
+      cornerRadius: 0,
+    };
+    addObject(activePage.id, obj);
+  }
+
+  // Drops a thin, full-opacity black bar onto the page -- the user then
+  // drags it into place under whatever text they want and stretches it
+  // with the existing resize handles, same generic drag/resize interaction
+  // every other rect already gets in PdfCanvas.tsx. No special rendering
+  // is needed: isUnderline is purely an identification tag, same as
+  // isHighlight -- an underline draws exactly like any other thin filled
+  // rect (see RectObject.isUnderline's own comment in types/document.ts).
+  function addUnderline(thickness: number) {
+    if (!activePage) return;
+    const { x, y } = nextOffset(activePage.objects.length);
+    const obj: PageObject = {
+      id: nanoid(),
+      type: 'rect',
+      isUnderline: true,
+      x,
+      y,
+      width: 200,
+      height: thickness,
+      ...baseDefaults,
+      fill: '#111111',
+      stroke: '#111111',
       strokeWidth: 0,
       cornerRadius: 0,
     };
@@ -473,32 +526,34 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       className="app-toolbar"
       style={{
         display: 'flex',
-        gap: 8,
-        padding: '8px 16px',
+        gap: 4,
+        padding: '6px 10px',
         alignItems: 'center',
-        flexWrap: 'wrap',
+        flexWrap: 'nowrap',
+        overflow: 'visible',
+        fontSize: 11,
       }}
     >
       <button
         onClick={addText}
         style={
           activeTool === 'text' || textPlacementActive
-            ? { background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
-            : {}
+            ? { ...COMPACT_BTN, background: 'var(--color-accent-bg)', border: '1px solid var(--color-accent)' }
+            : COMPACT_BTN
         }
       >
         {t('toolbar.addText')}
       </button>
-      <button onClick={addRect} style={activeToolStyle('rect')}>
+      <button onClick={addRect} style={{ ...COMPACT_BTN, ...activeToolStyle('rect') }}>
         {t('toolbar.addRectangle')}
       </button>
-      <button onClick={addEllipse} style={activeToolStyle('ellipse')}>
+      <button onClick={addEllipse} style={{ ...COMPACT_BTN, ...activeToolStyle('ellipse') }}>
         {t('toolbar.addEllipse')}
       </button>
       <button
         onClick={addBorder}
         title={t('toolbar.addBorderTitle')}
-        style={activeToolStyle('border')}
+        style={{ ...COMPACT_BTN, ...activeToolStyle('border') }}
       >
         {t('toolbar.addBorder')}
       </button>
@@ -516,18 +571,18 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
           if (selectedBorder) updateSelectedBorder({ stroke });
         }}
       />
-      <button onClick={triggerImagePick} style={activeToolStyle('image')}>
+      <button onClick={triggerImagePick} style={{ ...COMPACT_BTN, ...activeToolStyle('image') }}>
         {t('toolbar.addImage')}
       </button>
 
-      <button onClick={addDate} title={t('toolbar.addDateTitle')}>
+      <button onClick={addDate} title={t('toolbar.addDateTitle')} style={COMPACT_BTN}>
         {t('toolbar.addDate')}
       </button>
 
       <button
         onClick={addHighlight}
         title={t('toolbar.addHighlightTitle')}
-        style={activeToolStyle('highlight')}
+        style={{ ...COMPACT_BTN, ...activeToolStyle('highlight') }}
       >
         {t('toolbar.addHighlight')}
       </button>
@@ -539,20 +594,36 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         }}
       />
 
-      <button onClick={() => setWatermarkDialogOpen(true)} title={t('toolbar.addWatermarkTitle')}>
+      <UnderlineButton
+        selected={!!selectedUnderline}
+        selectedThickness={selectedUnderline?.height}
+        defaultThickness={underlineDefaults.thickness}
+        active={activeTool === 'underline'}
+        onPick={(thickness) => {
+          setUnderlineDefaults((d) => ({ ...d, thickness }));
+          if (selectedUnderline) {
+            updateSelectedUnderline({ height: thickness });
+          } else {
+            addUnderline(thickness);
+          }
+        }}
+      />
+
+      <button onClick={() => setWatermarkDialogOpen(true)} title={t('toolbar.addWatermarkTitle')} style={COMPACT_BTN}>
         {t('toolbar.addWatermark')}
       </button>
 
       <button
         onClick={handleSignatureClick}
         title={isPremium ? t('toolbar.addSignatureTitle') : t('toolbar.addSignatureTitlePremium')}
+        style={COMPACT_BTN}
       >
         {isPremium ? t('toolbar.addSignature') : t('toolbar.addSignaturePremium')}
       </button>
 
       <Divider />
 
-      <button onClick={runSpellCheck} title={t('toolbar.checkSpellingTitle')}>
+      <button onClick={runSpellCheck} title={t('toolbar.checkSpellingTitle')} style={COMPACT_BTN}>
         {t('toolbar.checkSpelling')}
       </button>
 
@@ -562,7 +633,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         value={selectedText?.fontFamily ?? ''}
         disabled={!selectedText}
         onChange={(e) => updateSelectedText({ fontFamily: e.target.value })}
-        style={{ fontFamily: selectedText?.fontFamily, minWidth: 130 }}
+        style={{ fontFamily: selectedText?.fontFamily, minWidth: 90, fontSize: 11, padding: '3px 4px' }}
         title={selectedText ? t('toolbar.fontTitle') : t('toolbar.fontTitleDisabled')}
       >
         {!selectedText && <option value="">{t('toolbar.font')}</option>}
@@ -622,13 +693,22 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
         onClick={rotateSelected}
         disabled={!selectedObject}
         title={t('toolbar.rotate')}
-        style={{ width: 28 }}
+        style={COMPACT_ICON_BTN}
       >
         ⟳
       </button>
 
       <Divider />
-      <span style={{ fontSize: 12, color: '#888', alignSelf: 'center', marginLeft: 8 }}>
+      <span
+        style={{
+          fontSize: 8,
+          color: '#888',
+          alignSelf: 'center',
+          marginLeft: 2,
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
+        }}
+      >
         {t('toolbar.hint')}
       </span>
       {fileInputElement}
@@ -682,7 +762,7 @@ function ToggleButton({
       disabled={disabled}
       title={title}
       style={{
-        width: 28,
+        ...COMPACT_ICON_BTN,
         background: active ? 'var(--color-accent-bg)' : 'var(--color-surface)',
         border: active ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
         ...style,
@@ -734,13 +814,13 @@ function ColorPicker({
         }}
         disabled={disabled}
         title={t('toolbar.textColor')}
-        style={{ width: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2px 0' }}
+        style={{ ...COMPACT_ICON_BTN, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2px 0' }}
       >
-        <span style={{ fontSize: 12, lineHeight: 1 }}>A</span>
+        <span style={{ fontSize: 10, lineHeight: 1 }}>A</span>
         <span
           style={{
-            width: 16,
-            height: 4,
+            width: 14,
+            height: 3,
             background: disabled ? '#ccc' : value ?? '#111111',
             marginTop: 2,
           }}
@@ -836,7 +916,7 @@ function LinkButton({
         disabled={disabled}
         title={value ? t('toolbar.linkedTo', { url: value }) : t('toolbar.insertLink')}
         style={{
-          width: 28,
+          ...COMPACT_ICON_BTN,
           background: value ? 'var(--color-accent-bg)' : 'var(--color-surface)',
           border: value ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
         }}
@@ -921,7 +1001,7 @@ function BorderThicknessPicker({
           setOpen((v) => !v);
         }}
         title={t('toolbar.borderThickness')}
-        style={{ width: 28 }}
+        style={COMPACT_ICON_BTN}
       >
         ▾
       </button>
@@ -971,6 +1051,111 @@ function BorderThicknessPicker({
   );
 }
 
+// 3 fixed presets rather than the Border tool's 5-step range -- an
+// underline is meant to be a quick, consistent mark under text, not a
+// tunable stroke, so keeping the choice small (thin/medium/thick) matches
+// the "give them the option to add a draggable line" request without
+// turning it into another full style picker. This is the ONLY place an
+// underline's thickness can be changed -- see PdfCanvas.tsx's resize
+// handling, where an isUnderline rect's height is deliberately held fixed
+// during a drag so users can only ever adjust its length on the canvas.
+const UNDERLINE_THICKNESSES: { label: string; value: number }[] = [
+  { label: 'Thin', value: 2 },
+  { label: 'Medium', value: 4 },
+  { label: 'Thick', value: 6 },
+];
+
+// Clicking the button itself opens the size dropdown -- there's no
+// separate "add" click and "pick a size" click. Picking a size either adds
+// a brand-new underline at that thickness (nothing selected) or updates
+// the currently-selected underline's thickness (something is selected),
+// so the same three options work for both creating and adjusting one.
+function UnderlineButton({
+  selected,
+  selectedThickness,
+  defaultThickness,
+  active,
+  onPick,
+}: {
+  selected: boolean;
+  selectedThickness: number | undefined;
+  defaultThickness: number;
+  active: boolean;
+  onPick: (thickness: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const currentValue = selected ? selectedThickness ?? defaultThickness : defaultThickness;
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title="Add or resize an underline bar — drag it under any text"
+        style={{ ...COMPACT_BTN, ...(active ? activeToolStyleShared : {}) }}
+      >
+        + Underline ▾
+      </button>
+
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1000,
+            padding: 6,
+            width: 150,
+          }}
+        >
+          {UNDERLINE_THICKNESSES.map(({ label, value: thickness }) => (
+            <button
+              key={thickness}
+              onClick={() => {
+                onPick(thickness);
+                setOpen(false);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                width: '100%',
+                padding: '6px 8px',
+                border: thickness === currentValue ? '1px solid var(--color-accent)' : '1px solid transparent',
+                background: thickness === currentValue ? '#eef6ff' : 'transparent',
+                borderRadius: 4,
+              }}
+            >
+              <div style={{ flex: 1, height: thickness, background: '#222' }} />
+              <span style={{ fontSize: 11, color: '#888' }}>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const activeToolStyleShared: React.CSSProperties = {
+  background: 'var(--color-accent-bg)',
+  border: '1px solid var(--color-accent)',
+};
+
 function BorderColorPicker({
   value,
   onChange,
@@ -996,12 +1181,12 @@ function BorderColorPicker({
           setOpen((v) => !v);
         }}
         title={t('toolbar.borderColor')}
-        style={{ width: 28, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2px 0' }}
+        style={{ ...COMPACT_ICON_BTN, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2px 0' }}
       >
         <span
           style={{
-            width: 16,
-            height: 16,
+            width: 14,
+            height: 14,
             border: '1px solid #888',
             background: value,
             borderRadius: 2,
@@ -1053,7 +1238,7 @@ function BorderColorPicker({
 }
 
 function Divider() {
-  return <div style={{ width: 1, background: 'var(--color-border)', margin: '2px 4px' }} />;
+  return <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--color-border)', margin: '2px 2px' }} />;
 }
 
 function HighlightColorPicker({
@@ -1071,8 +1256,8 @@ function HighlightColorPicker({
       onChange={(e) => onChange(e.target.value)}
       title={t('toolbar.highlightColor')}
       style={{
-        width: 28,
-        height: 28,
+        width: 22,
+        height: 26,
         padding: 0,
         border: '1px solid var(--color-border)',
         borderRadius: 4,
@@ -1173,7 +1358,7 @@ function FontSizeDropdown({ value, disabled, onChange }: FontSizeDropdownProps) 
       disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
       title={disabled ? t('toolbar.fontSizeTitleDisabled') : t('toolbar.fontSizeTitle')}
-      style={{ width: 56 }}
+      style={{ width: 44, fontSize: 11, padding: '3px 2px' }}
     >
       {(!value || !FONT_SIZE_OPTIONS.includes(value)) && (
         // FIX: this option's value used to be "" (empty string). The

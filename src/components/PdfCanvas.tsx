@@ -34,9 +34,22 @@ interface Props {
 const MIN_SIZE = GRID_SIZE;
 const HANDLE = 7; // corner/edge handle size, in PDF points (see note below)
 const ROTATE_HANDLE_OFFSET = 22;
+// How far the pointer has to move (in PDF points) before an interaction
+// counts as a real drag rather than a plain click. Below this, nothing
+// about the object's stored bounds is touched -- see the Interaction.moved
+// comment for why this matters.
+const CLICK_DRAG_THRESHOLD = 3;
 
 function isTextObj(o: PageObject): o is Extract<PageObject, { type: 'text' }> {
   return o.type === 'text';
+}
+
+// Used alongside isTextObj to identify rects specifically -- needed so both
+// the resize handler and renderHandles below can single out underline bars
+// (RectObject.isUnderline) and treat them as length-only: no vertical
+// resize component, and only left/right handles rather than four corners.
+function isRectObj(o: PageObject): o is Extract<PageObject, { type: 'rect' }> {
+  return o.type === 'rect';
 }
 
 // -- link-paste detection --------------------------------------------
@@ -79,6 +92,125 @@ function clampBoundsToPage<T extends Bounds>(b: T, page: { width: number; height
   return { ...b, x, y, width, height };
 }
 
+// -- text overflow -> next page -----------------------------------------
+// A lazily-created, reused, hidden div for measuring how tall a candidate
+// string of text would render at a given width/font -- kept off in the
+// corner of the viewport rather than inside the SVG, since a plain CSS
+// pixel here means exactly the same thing a "point" does everywhere else
+// in this file (foreignObject content already lays out 1 SVG user-unit =
+// 1 CSS px; a detached div outside any SVG uses that same literal px
+// value with no extra scaling either -- so no unit conversion is needed
+// between the two).
+let measureDiv: HTMLDivElement | null = null;
+
+function getMeasureDiv(): HTMLDivElement {
+  if (!measureDiv) {
+    measureDiv = window.document.createElement('div');
+    measureDiv.style.position = 'fixed';
+    measureDiv.style.left = '-99999px';
+    measureDiv.style.top = '0';
+    measureDiv.style.visibility = 'hidden';
+    measureDiv.style.whiteSpace = 'pre-wrap';
+    measureDiv.style.overflowWrap = 'break-word';
+    measureDiv.style.boxSizing = 'border-box';
+    window.document.body.appendChild(measureDiv);
+  }
+  return measureDiv;
+}
+
+interface TextStyleForMeasure {
+  width: number;
+  fontFamily: string;
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+}
+
+function measureTextHeight(text: string, style: TextStyleForMeasure): number {
+  const div = getMeasureDiv();
+  div.style.width = `${style.width}px`;
+  div.style.fontFamily = style.fontFamily;
+  div.style.fontSize = `${style.fontSize}px`;
+  div.style.fontWeight = style.bold ? 'bold' : 'normal';
+  div.style.fontStyle = style.italic ? 'italic' : 'normal';
+  div.textContent = text;
+  return div.scrollHeight;
+}
+
+// A second, dedicated hidden div for single-line "how wide would this text
+// render with no wrapping at all" measurements -- kept separate from
+// getMeasureDiv() above (used for wrap/height measurement) rather than
+// toggling one div's white-space back and forth, so there's no risk of one
+// measurement's temporary style changes leaking into the other's result.
+let measureLineDiv: HTMLDivElement | null = null;
+
+function getMeasureLineDiv(): HTMLDivElement {
+  if (!measureLineDiv) {
+    measureLineDiv = window.document.createElement('div');
+    measureLineDiv.style.position = 'fixed';
+    measureLineDiv.style.left = '-99999px';
+    measureLineDiv.style.top = '0';
+    measureLineDiv.style.visibility = 'hidden';
+    measureLineDiv.style.whiteSpace = 'pre';
+    measureLineDiv.style.width = 'max-content';
+    window.document.body.appendChild(measureLineDiv);
+  }
+  return measureLineDiv;
+}
+
+/** How wide `text` would render as one unbroken line, in the given font --
+ * used only to decide how tightly the selection outline should hug a text
+ * object's actual content (see renderHandles). Not used for anything that
+ * affects layout/storage: a text object's real, wrappable width is a
+ * completely separate concern this never touches. */
+function measureNaturalTextWidth(text: string, style: Omit<TextStyleForMeasure, 'width'>): number {
+  const div = getMeasureLineDiv();
+  div.style.fontFamily = style.fontFamily;
+  div.style.fontSize = `${style.fontSize}px`;
+  div.style.fontWeight = style.bold ? 'bold' : 'normal';
+  div.style.fontStyle = style.italic ? 'italic' : 'normal';
+  div.textContent = text;
+  return div.scrollWidth;
+}
+
+/** Finds how much of `text` fits within `maxHeight` at the given box style,
+ * splitting on whitespace boundaries (never mid-word) so the break reads
+ * naturally when the remainder continues on the next page. Binary-searches
+ * over token count rather than characters -- far fewer reflows for the
+ * same result, since wrapped-text height is monotonic in token count. */
+function splitTextToFit(
+  text: string,
+  style: TextStyleForMeasure,
+  maxHeight: number
+): { fitText: string; overflowText: string } {
+  if (measureTextHeight(text, style) <= maxHeight) {
+    return { fitText: text, overflowText: '' };
+  }
+
+  // Odd indices are the whitespace runs themselves, so
+  // tokens.slice(0, k).join('') always reconstructs an exact prefix of the
+  // original string -- no information (or spacing) is lost by splitting.
+  const tokens = text.split(/(\s+)/);
+  let lo = 0;
+  let hi = tokens.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const candidate = tokens.slice(0, mid).join('');
+    if (measureTextHeight(candidate, style) <= maxHeight) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const fitText = tokens.slice(0, lo).join('');
+  // Drop the leading whitespace run the split landed on -- it was a
+  // natural break point, not content the next page's box should start with.
+  const overflowText = tokens.slice(lo).join('').replace(/^\s+/, '');
+  return { fitText, overflowText };
+}
+
+
 /** Converts a pointer event's client coordinates into this SVG's own
  * user-coordinate space (PDF points). Goes through the SVG's screen<->user
  * transform rather than any manual scale math, so it stays correct no
@@ -101,7 +233,11 @@ function rotateAttr(o: { x: number; y: number; width: number; height: number; ro
 }
 
 type Mode = 'move' | 'resize' | 'rotate';
-type Handle = 'nw' | 'ne' | 'sw' | 'se' | 'e'; // 'e' = text width-only handle
+// 'e' = text width-only handle (right edge). 'w' = underline width-only
+// handle (left edge) -- underlines get both 'e' and 'w' (see renderHandles)
+// so length can be adjusted from either side, instead of the four corner
+// handles regular rects/ellipses/images get.
+type Handle = 'nw' | 'ne' | 'sw' | 'se' | 'e' | 'w';
 
 interface Interaction {
   id: string;
@@ -111,6 +247,15 @@ interface Interaction {
   startBounds: Bounds & { rotation: number };
   live: Bounds & { rotation: number };
   overlapping: boolean;
+  // True once the pointer has moved past CLICK_DRAG_THRESHOLD since this
+  // interaction began. A plain click -- pointerdown then pointerup with
+  // little or no movement -- should only select the object, never touch
+  // its stored position/size: without this, even a dx/dy of 0 still ran
+  // through snapToGrid() unconditionally, which visibly nudged any object
+  // not already sitting on a grid line (i.e. nearly every PDF-extracted
+  // text object, whose real coordinates are essentially never grid-
+  // aligned) on every single click.
+  moved: boolean;
 }
 
 interface Drawing {
@@ -126,9 +271,13 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+  const doc = useEditorStore((s) => s.document); // named `doc`, not `document` -- this file uses window.document.* throughout for real DOM APIs (createRange, getSelection, etc.), and shadowing the global with the store's document would make those calls easy to misread
+  const activePageIndex = useEditorStore((s) => s.activePageIndex);
+  const setActivePageIndex = useEditorStore((s) => s.setActivePageIndex);
   const updateObject = useEditorStore((s) => s.updateObject);
   const removeObject = useEditorStore((s) => s.removeObject);
   const addObject = useEditorStore((s) => s.addObject);
+  const addPages = useEditorStore((s) => s.addPages);
   const selectedObjectId = useEditorStore((s) => s.selectedObjectId);
   const setSelectedObjectId = useEditorStore((s) => s.setSelectedObjectId);
   const textPlacementActive = useEditorStore((s) => s.textPlacementActive);
@@ -198,21 +347,36 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
 
   // A newly-drawn text box should be focused and ready to type into
   // immediately, same as the old double-click-to-commit placeholder flow.
-  const pendingFocusIdRef = useRef<string | null>(null);
+  // Also used when text flows onto a new page mid-typing (see
+  // handleTextInput below) -- there the cursor needs to land at the END
+  // of the carried-over text, not select all of it, so typing continues
+  // seamlessly instead of overwriting what just flowed over.
+  const pendingFocusRef = useRef<{ id: string; placement: 'select-all' | 'end' } | null>(null);
   useEffect(() => {
-    const id = pendingFocusIdRef.current;
-    if (!id) return;
-    const el = textDivRefs.current.get(id);
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+    const el = textDivRefs.current.get(pending.id);
     if (el) {
-      pendingFocusIdRef.current = null;
+      pendingFocusRef.current = null;
       el.focus();
       const range = window.document.createRange();
       range.selectNodeContents(el);
+      if (pending.placement === 'end') range.collapse(false);
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
     }
   });
+
+  // When handleTextInput below flows text onto a new page mid-keystroke,
+  // the box being typed into unmounts as the view switches pages -- which
+  // can (browser-dependent) fire a native blur on its way out. Without
+  // this guard, handleTextBlur's own overflow check would see the same
+  // already-over-the-limit content a second time and duplicate the
+  // overflow text onto the new page again. Keyed by the DOM element itself
+  // (not the object id) so it needs no manual cleanup -- the entry is
+  // simply unreachable once the element is garbage collected after unmount.
+  const liveOverflowHandledRef = useRef(new WeakSet<HTMLDivElement>());
 
   // -- live-preview bounds for whichever object is currently being
   // dragged/resized/rotated -- everything else renders straight from the
@@ -240,6 +404,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         startBounds: { x: obj.x, y: obj.y, width: obj.width, height: obj.height, rotation: obj.rotation },
         live: { x: obj.x, y: obj.y, width: obj.width, height: obj.height, rotation: obj.rotation },
         overlapping: false,
+        moved: false,
       });
     },
     [readOnly, setSelectedObjectId]
@@ -259,6 +424,14 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         const obj = page.objects.find((o) => o.id === cur.id);
         if (!obj) return cur;
 
+        const moved = cur.moved || Math.hypot(dx, dy) >= CLICK_DRAG_THRESHOLD;
+        if (!moved) {
+          // Still within click-jitter range -- don't touch bounds at all
+          // yet (not even via clamping/snapping), so a plain click never
+          // has any visible or stored effect on the object.
+          return cur.moved === moved ? cur : { ...cur, moved };
+        }
+
         let next: Bounds & { rotation: number } = cur.startBounds;
 
         if (cur.mode === 'move') {
@@ -269,7 +442,25 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           };
         } else if (cur.mode === 'resize') {
           const sb = cur.startBounds;
-          if (cur.handle === 'e') {
+          // Underline bars (RectObject.isUnderline) are only ever meant to
+          // change LENGTH -- thickness is picker-only, set from
+          // Toolbar.tsx's UnderlineThicknessPicker, never from a canvas
+          // drag. Regardless of which handle triggered this (renderHandles
+          // only ever gives an underline 'e'/'w' handles, but this check
+          // doesn't rely on that -- it holds even if a handle id it
+          // doesn't recognize somehow reaches here), only the x/width
+          // component is ever applied; height and y are left exactly as
+          // they started.
+          if (isRectObj(obj) && obj.isUnderline) {
+            let { x, width } = sb;
+            if (cur.handle?.includes('e')) width = Math.max(MIN_SIZE, snapToGrid(sb.width + dx));
+            if (cur.handle?.includes('w')) {
+              const newW = Math.max(MIN_SIZE, snapToGrid(sb.width - dx));
+              x = sb.x + (sb.width - newW);
+              width = newW;
+            }
+            next = { ...sb, x, width };
+          } else if (cur.handle === 'e') {
             // Text width-only handle -- height stays content-driven.
             const w = Math.max(MIN_SIZE, snapToGrid(sb.width + dx));
             next = { ...sb, width: w };
@@ -311,7 +502,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           );
         }
 
-        return { ...cur, live: next, overlapping };
+        return { ...cur, live: next, overlapping, moved };
       });
     }
 
@@ -320,6 +511,13 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         if (!cur) return null;
         const obj = page.objects.find((o) => o.id === cur.id);
         if (!obj) return null;
+
+        if (!cur.moved) {
+          // Plain click -- selection already happened on pointerdown (see
+          // beginInteraction), and nothing about the object's stored
+          // bounds was ever touched, so there's nothing to commit here.
+          return null;
+        }
 
         let final = cur.live;
 
@@ -406,7 +604,175 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     [page.id, page.objects, updateObject]
   );
 
+  // Corrects any text object whose real rendered height doesn't match its
+  // stored height, then cascades push-downs across the WHOLE page -- same
+  // sweep as pushDownText above, just applied to every text object at
+  // once rather than one edited object. This exists because pushDownText
+  // only ever runs reactively, in response to typing (see handleTextInput
+  // below) -- content that arrives already-typed, like a freshly uploaded
+  // PDF, never goes through it at all. If pdfUpload.ts's extracted height
+  // for even one line is slightly off (a very plausible rounding error
+  // once a substitute web-safe font's metrics are close, but not
+  // identical, to whatever font the PDF actually embedded), that box
+  // silently overlapped whatever sat below it, with nothing to ever
+  // correct it -- since nothing you do short of editing that exact object
+  // would trigger a remeasure. Runs once whenever a page is loaded/
+  // switched to; if everything's already consistent (the common case for
+  // a page that's been interacted with) it's a fast no-op.
+  const reflowAllText = useCallback(() => {
+    const textObjs = page.objects.filter(isTextObj);
+    if (textObjs.length === 0) return;
+
+    const boundsById = new Map<string, Bounds>();
+    let anyHeightChanged = false;
+
+    for (const obj of textObjs) {
+      const trueHeight = Math.max(
+        MIN_SIZE,
+        measureTextHeight(obj.text, {
+          width: obj.width,
+          fontFamily: obj.fontFamily,
+          fontSize: obj.fontSize,
+          bold: obj.bold,
+          italic: obj.italic,
+        })
+      );
+      boundsById.set(obj.id, { x: obj.x, y: obj.y, width: obj.width, height: trueHeight });
+      if (Math.abs(trueHeight - obj.height) > 0.5) {
+        updateObject(page.id, obj.id, { height: trueHeight });
+        anyHeightChanged = true;
+      }
+    }
+
+    if (!anyHeightChanged) return; // every stored height was already correct
+
+    for (let pass = 0; pass < 8; pass++) {
+      const sorted = [...textObjs].sort((a, b) => boundsById.get(a.id)!.y - boundsById.get(b.id)!.y);
+      let pushedAny = false;
+
+      for (let i = 0; i < sorted.length; i++) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const upper = boundsById.get(sorted[i].id)!;
+          const lowerId = sorted[j].id;
+          const lower = boundsById.get(lowerId)!;
+
+          const horizontallyOverlaps =
+            upper.x < lower.x + lower.width + OVERLAP_PAD && upper.x + upper.width + OVERLAP_PAD > lower.x;
+          if (!horizontallyOverlaps) continue;
+
+          const overlapAmount = upper.y + upper.height + OVERLAP_PAD - lower.y;
+          if (overlapAmount > 0) {
+            const newTop = snapToGrid(lower.y + overlapAmount);
+            boundsById.set(lowerId, { ...lower, y: newTop });
+            updateObject(page.id, lowerId, { y: newTop });
+            pushedAny = true;
+          }
+        }
+      }
+      if (!pushedAny) break;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page.id]);
+
+  useEffect(() => {
+    reflowAllText();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page.id]);
+
+  // Moves `overflowText` onto the next page (creating one, same size as the
+  // current page, if none exists yet), inheriting `obj`'s formatting.
+  // Always switches the view to that page, so the user can see where their
+  // text went -- word-processor-style -- rather than having to go look for
+  // it. `focusNewBox` additionally places the cursor in the new box
+  // (collapsed at the end, ready to keep typing) -- used when this fires
+  // live while someone is mid-keystroke, so typing continues uninterrupted
+  // instead of silently going nowhere once the original box's page is no
+  // longer the one being shown.
+  function flowOverflowToNextPage(
+    obj: Extract<PageObject, { type: 'text' }>,
+    overflowText: string,
+    style: TextStyleForMeasure,
+    focusNewBox: boolean
+  ) {
+    const overflowHeight = Math.max(MIN_SIZE, measureTextHeight(overflowText, style));
+    const overflowBase = {
+      type: 'text' as const,
+      rotation: 0,
+      opacity: obj.opacity,
+      fontSize: obj.fontSize,
+      fontFamily: obj.fontFamily,
+      color: obj.color,
+      bold: obj.bold,
+      italic: obj.italic,
+      strikethrough: obj.strikethrough,
+      align: obj.align,
+      link: obj.link,
+      text: overflowText,
+    };
+
+    const newId = nanoid();
+    const nextPage = doc?.pages[activePageIndex + 1];
+
+    if (nextPage) {
+      // A next page already exists -- drop the overflow at its top and
+      // switch to it, same as a word processor scrolling you to where
+      // your text continued. Doesn't touch anything already on that page.
+      const placed = clampBoundsToPage(
+        { x: obj.x, y: GRID_SIZE, width: obj.width, height: overflowHeight },
+        nextPage
+      );
+      addObject(nextPage.id, { id: newId, ...overflowBase, ...placed } as PageObject);
+    } else {
+      // No next page yet -- create one, same size as the current page,
+      // with the overflow text already placed on it.
+      const placed = clampBoundsToPage(
+        { x: obj.x, y: GRID_SIZE, width: obj.width, height: overflowHeight },
+        { width: page.width, height: page.height }
+      );
+      const newPage: Page = {
+        id: nanoid(),
+        width: page.width,
+        height: page.height,
+        backgroundImage: null,
+        objects: [{ id: newId, ...overflowBase, ...placed } as PageObject],
+      };
+      addPages([newPage]); // also switches activePageIndex to it
+    }
+
+    if (nextPage) setActivePageIndex(activePageIndex + 1); // addPages already did this for the new-page branch
+    if (focusNewBox) pendingFocusRef.current = { id: newId, placement: 'end' };
+  }
+
   function handleTextInput(obj: PageObject, el: HTMLDivElement) {
+    if (isTextObj(obj)) {
+      const maxHeight = Math.max(MIN_SIZE, page.height - obj.y);
+      // Cheap check first, using layout the browser already computed for
+      // this render -- only pay for the offscreen-measure/binary-search
+      // split below on the rare keystroke that actually crosses the line.
+      if (el.scrollHeight > maxHeight) {
+        const style: TextStyleForMeasure = {
+          width: obj.width,
+          fontFamily: obj.fontFamily,
+          fontSize: obj.fontSize,
+          bold: obj.bold,
+          italic: obj.italic,
+        };
+        const fullText = el.textContent ?? '';
+        const { fitText, overflowText } = splitTextToFit(fullText, style, maxHeight);
+        const fitHeight = Math.max(MIN_SIZE, measureTextHeight(fitText, style));
+        updateObject(page.id, obj.id, { text: fitText, height: fitHeight });
+
+        if (overflowText) {
+          liveOverflowHandledRef.current.add(el);
+          flowOverflowToNextPage(obj, overflowText, style, true);
+          // The view is switching to a different page this same tick --
+          // this div's page no longer renders it, so there's nothing left
+          // to do with it (no push-down pass, no further height sync).
+          return;
+        }
+      }
+    }
+
     const newHeight = Math.max(MIN_SIZE, el.scrollHeight);
     if (newHeight !== obj.height) {
       updateObject(page.id, obj.id, { height: newHeight });
@@ -415,8 +781,51 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   }
 
   function handleTextBlur(obj: PageObject, el: HTMLDivElement) {
+    // Already handled live by handleTextInput just before this box's page
+    // switched out from under it -- unmounting a focused element can fire
+    // a native blur on the way out, which would otherwise see the same
+    // over-the-limit content again and duplicate the overflow text.
+    if (liveOverflowHandledRef.current.has(el)) {
+      liveOverflowHandledRef.current.delete(el);
+      return;
+    }
+
     const text = el.textContent ?? '';
-    updateObject(page.id, obj.id, { text });
+
+    if (!isTextObj(obj)) {
+      updateObject(page.id, obj.id, { text });
+      return;
+    }
+
+    const style: TextStyleForMeasure = {
+      width: obj.width,
+      fontFamily: obj.fontFamily,
+      fontSize: obj.fontSize,
+      bold: obj.bold,
+      italic: obj.italic,
+    };
+
+    const maxHeight = Math.max(MIN_SIZE, page.height - obj.y);
+    const fullHeight = Math.max(MIN_SIZE, el.scrollHeight);
+
+    // Fits on this page as-is -- the common case, unchanged from before.
+    if (fullHeight <= maxHeight) {
+      updateObject(page.id, obj.id, { text });
+      return;
+    }
+
+    // Safety net for anything that grew past the limit WITHOUT going
+    // through handleTextInput's live check above -- e.g. a resize handle
+    // shrinking the box's width (and so growing its wrapped height) rather
+    // than a keystroke. Doesn't steal focus, since the user already
+    // clicked away from this box on purpose.
+    const { fitText, overflowText } = splitTextToFit(text, style, maxHeight);
+    const fitHeight = Math.max(MIN_SIZE, measureTextHeight(fitText, style));
+    updateObject(page.id, obj.id, { text: fitText, height: fitHeight });
+
+    if (!overflowText) return; // borderline case -- everything fit after all
+
+    flowOverflowToNextPage(obj, overflowText, style, false);
   }
 
   // Pasting into a text box always inserts plain text (never whatever rich
@@ -525,7 +934,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         const placed = clampBoundsToPage({ ...placedRaw, width, height }, page);
 
         const id = nanoid();
-        pendingFocusIdRef.current = id;
+        pendingFocusRef.current = { id, placement: 'select-all' };
         addObject(page.id, {
           id,
           type: 'text',
@@ -648,8 +1057,43 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
   function renderHandles(obj: PageObject, bounds: Bounds & { rotation: number }) {
     if (readOnly || selectedObjectId !== obj.id || interaction) return null;
     const { x, y, width, height } = bounds;
+
+    // For a single-line text object, the stored width often carries a
+    // safety margin from PDF extraction (see pdfUpload.ts's
+    // WIDTH_PADDING_RATIO) meant to keep the substitute web-safe font
+    // from wrapping unexpectedly -- useful for layout, but it means the
+    // selection outline can extend visibly past the last actual character.
+    // Hugging the text's real single-line width fixes that, without
+    // touching the stored width itself (still needed for correct
+    // wrap/overlap/push-down behavior) or the resize handle below, which
+    // stays at the true box edge. A genuinely wrapped multi-line
+    // paragraph is left alone here: its unbroken natural width would
+    // exceed the box (that's why it wraps), so this only ever kicks in
+    // for text that isn't actually using its full box.
+    let outlineWidth = width;
+    if (isTextObj(obj) && !obj.text.includes('\n')) {
+      const natural = measureNaturalTextWidth(obj.text, {
+        fontFamily: obj.fontFamily,
+        fontSize: obj.fontSize,
+        bold: obj.bold,
+        italic: obj.italic,
+      });
+      if (natural > 0 && natural < width) outlineWidth = natural;
+    }
+
+    const isUnderlineObj = isRectObj(obj) && obj.isUnderline;
+
     const corners: { id: Handle; cx: number; cy: number; cursor: string }[] = isTextObj(obj)
       ? [{ id: 'e', cx: x + width, cy: y + height / 2, cursor: 'ew-resize' }]
+      : isUnderlineObj
+      ? [
+          // Left/right only -- an underline's thickness is set from the
+          // toolbar picker, never dragged, so there's no top/bottom
+          // handle to grab (see the isUnderline branch in onMove's resize
+          // case, which this pairs with).
+          { id: 'w', cx: x, cy: y + height / 2, cursor: 'ew-resize' },
+          { id: 'e', cx: x + width, cy: y + height / 2, cursor: 'ew-resize' },
+        ]
       : [
           { id: 'nw', cx: x, cy: y, cursor: 'nwse-resize' },
           { id: 'ne', cx: x + width, cy: y, cursor: 'nesw-resize' },
@@ -662,7 +1106,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         <rect
           x={x}
           y={y}
-          width={width}
+          width={outlineWidth}
           height={height}
           fill="none"
           stroke="#3380cc"
