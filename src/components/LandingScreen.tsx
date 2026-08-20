@@ -15,6 +15,7 @@ import { PrivacyPolicyScreen } from './PrivacyPolicyScreen';
 import { TermsOfServiceScreen } from './TermsOfServiceScreen';
 import { HelpCenterScreen } from './HelpCenterScreen';
 import { AdminScreen } from './AdminScreen';
+import { GoogleOneTap } from './GoogleOneTap';
 
 interface Props {
   onEnter: () => void;
@@ -348,6 +349,11 @@ export function LandingScreen({ onEnter }: Props) {
       fontFamily: 'var(--font-family)',
       overflowY: 'auto',
     }}>
+      {/* Google's real One Tap prompt -- only ever shown to a visitor we've
+          already confirmed is signed out. Renders nothing of its own; it's
+          Google's script that paints the floating card, not this app. */}
+      {authStatus === 'unauthenticated' && <GoogleOneTap />}
+
       {/* ── Top bar ────────────────────────────────────── */}
       <header style={{
         background: 'var(--color-surface)',

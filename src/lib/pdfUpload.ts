@@ -1,8 +1,8 @@
 import '../lib/pdfjsSetup';
-import { getDocument } from 'pdfjs-dist';
+import { getDocument, OPS } from 'pdfjs-dist';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { nanoid } from 'nanoid';
-import type { Page, TextObject } from '../types/document';
+import type { Page, PageObject, RectObject, TextObject } from '../types/document';
 
 // How much larger than the PDF's own point size to rasterize the page
 // background at. A flat 2x oversample looks sharp on a standard 1x
@@ -131,10 +131,209 @@ function normalizeGlyphs(text: string): string {
   return out;
 }
 
+// ---------------------------------------------------------------------
+// Underline-rule detection
+// ---------------------------------------------------------------------
+// A heading's underline is very rarely a font attribute -- pdf.js's
+// getTextContent() (what extractTextRuns below reads) has no "underline"
+// property at all, because the vast majority of PDF generators (Word,
+// Google Docs, LibreOffice) draw an underline as an actual thin filled
+// rectangle in the page's own drawing commands: PDF's `re` (construct a
+// rectangle path) immediately followed by `f` (fill it). Left alone,
+// that rectangle just becomes part of the flattened raster
+// backgroundImage -- a static pixel that doesn't move if the heading
+// text above it is later edited, resized, or repositioned, and isn't
+// erased by the text-erasure pass below (an all-caps heading has near-
+// zero descent, so erasePaddedBounds' measured erase region often
+// doesn't reach down to where the rule actually sits).
+//
+// This scans the page's full operator list (its literal drawing
+// commands, via pdf.js's getOperatorList -- a different, lower-level API
+// than getTextContent) for exactly that pattern, and converts each match
+// into a real, draggable/resizable isUnderline RectObject (the same kind
+// the toolbar's "+ Underline" button creates) positioned and sized to
+// match the original rule exactly -- then erases that rule's footprint
+// from the raster background so there's no duplicate.
+//
+// KNOWN LIMITATIONS (heuristic, not exhaustive):
+//  - Only catches a rule drawn as ONE simple rectangle path immediately
+//    followed by a fill. A double/dashed underline drawn as multiple
+//    rectangles in a single path, or an underline drawn as a stroked
+//    line (moveto/lineto/stroke) rather than a filled rect, won't be
+//    picked up -- it'll fall back to living in the raster background as
+//    before.
+//  - Only non-rotated (or exactly-180°-rotated) rules are converted --
+//    a genuinely angled rule is left alone rather than risk a wrong
+//    bounding box.
+//  - This finds every thin, wide filled rectangle on the page, not just
+//    ones sitting under a heading -- an unrelated decorative divider bar
+//    that happens to match the same width/height/aspect-ratio heuristic
+//    would also get converted. In practice this is rare enough (real
+//    decorative dividers are usually much wider/thicker, or a different
+//    color region entirely) not to be a problem, but it's a heuristic,
+//    not a guarantee.
+
+// How thick a filled rectangle is allowed to be and still count as an
+// underline rule rather than some other filled shape (a colored panel, a
+// table cell background, a checkbox/bullet fill). Typical underline
+// thickness in real documents is well under this.
+const MAX_UNDERLINE_RULE_HEIGHT = 4;
+
+// How much wider than it is tall a filled rectangle needs to be to count
+// as a rule rather than a near-square fill (a checkbox, a small bullet
+// square, a color swatch). Even a short underline under a 2-3 character
+// word comfortably clears this.
+const MIN_UNDERLINE_ASPECT_RATIO = 6;
+
+// Guards against stray hairline-width filled rectangles some PDF
+// generators emit for antialiasing/hinting purposes that aren't a real,
+// visible underline at all.
+const MIN_UNDERLINE_RULE_WIDTH = 6;
+
+// How far from perfectly horizontal (0° or 180°, since a rectangle's
+// "which way is up" is ambiguous under an arbitrary transform) a rule's
+// computed rotation is allowed to be before we treat it as genuinely
+// rotated and leave it alone rather than risk a wrong bounding box.
+const UNDERLINE_RULE_ROTATION_TOLERANCE_DEG = 1;
+
+// Extra margin (in PDF points, each side) added when erasing a detected
+// rule's footprint from the raster background -- covers anti-aliased
+// edges around the original fill so no thin sliver of it is left
+// visible next to the new, separately-rendered RectObject sitting in
+// its place.
+const UNDERLINE_RULE_ERASE_PADDING = 1;
+
+interface DetectedUnderlineRule {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// Applies a PDF affine transform matrix [a,b,c,d,e,f] to a single POINT
+// (x,y) -- distinct from combineTransforms below, which composes two
+// matrices together rather than transforming a coordinate. PDF content
+// streams give constructPath's rectangle coordinates in the *local*
+// space active when that path was drawn (verified against pdf.js's own
+// getOperatorList output -- a rectangle's coordinates and bounding box
+// are NOT pre-adjusted for any `cm` transform that was active when it
+// was drawn), so this is what turns those local numbers into real,
+// absolute page-point coordinates once combined with the accumulated
+// CTM (see detectUnderlineRules below).
+function applyMatrixToPoint(m: number[], x: number, y: number): { x: number; y: number } {
+  return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+// Scans this page's raw drawing commands for thin filled rectangles that
+// look like underline rules -- see the file-level comment above this
+// section for the full reasoning and known limitations.
+//
+// pdf.js's operator list gives every path's coordinates in the LOCAL
+// coordinate space active at the moment it was drawn -- it does NOT
+// pre-multiply them by whatever `cm` (transform) was in effect, the way
+// a naive read of getOperatorList's output might suggest. So this walks
+// the operator list itself, maintaining its own copy of the content
+// stream's transform stack (mirroring `q`/`Q`/`cm`, i.e. OPS.save /
+// OPS.restore / OPS.transform), the same bookkeeping the PDF spec itself
+// requires a renderer to do -- then applies the accumulated transform
+// (combined with the page's own viewport transform, exactly like
+// extractTextRuns and extractLinkAnnotations already do for glyphs and
+// link rectangles) to each candidate rectangle's corners to land in the
+// same top-left-origin point space every other extracted object here
+// uses.
+//
+// Takes the operator list as a parameter rather than fetching it itself
+// -- pdfFileToPages needs to call getOperatorList() early regardless
+// (see its own comment), since that's also what loads real font
+// bold/italic metadata into commonObjs for extractTextRuns to read, so
+// this reuses that same call instead of fetching the whole operator list
+// from scratch a second time.
+async function detectUnderlineRules(
+  opList: { fnArray: number[]; argsArray: unknown[] },
+  viewport: import('pdfjs-dist').PageViewport
+): Promise<DetectedUnderlineRule[]> {
+  const { fnArray, argsArray } = opList;
+  const results: DetectedUnderlineRule[] = [];
+
+  let ctm: number[] = [1, 0, 0, 1, 0, 0];
+  const stack: number[][] = [];
+
+  for (let i = 0; i < fnArray.length; i++) {
+    const fn = fnArray[i];
+
+    if (fn === OPS.save) {
+      stack.push(ctm);
+      continue;
+    }
+    if (fn === OPS.restore) {
+      ctm = stack.pop() ?? ctm;
+      continue;
+    }
+    if (fn === OPS.transform) {
+      const m = argsArray[i] as number[];
+      ctm = combineTransforms(ctm, m);
+      continue;
+    }
+    if (fn !== OPS.constructPath) continue;
+
+    // args shape verified directly against pdf.js's actual output:
+    // [subPathOpCodes, flatCoords, minMax]. We only recognize the
+    // simplest, overwhelmingly common case a text-editor-exported PDF
+    // uses to draw an underline: a path that's just ONE rectangle
+    // subpath (`re`), immediately painted (`f`/`f*`) rather than used as
+    // a clip region or left unpainted.
+    const args = argsArray[i] as [number[], number[], number[]];
+    const [subOps, coords] = args;
+    const isSingleRect = subOps.length === 1 && subOps[0] === OPS.rectangle;
+    if (!isSingleRect) continue;
+
+    const nextFn = fnArray[i + 1];
+    const wasFilled = nextFn === OPS.fill || nextFn === OPS.eoFill;
+    if (!wasFilled) continue;
+
+    const [rx, ry, rw, rh] = coords;
+    const full = combineTransforms(viewport.transform, ctm);
+
+    // Only trust this as a genuine horizontal rule if the combined
+    // transform is (within tolerance) unrotated -- otherwise the
+    // corner-based bounding box below wouldn't represent the rule's
+    // actual shape, and we'd rather leave a rotated rule in the raster
+    // background than convert it into a wrong-shaped object.
+    const rotation = (Math.atan2(full[1], full[0]) * 180) / Math.PI;
+    const normalizedRotation = ((rotation % 180) + 180) % 180;
+    const isAxisAligned =
+      normalizedRotation <= UNDERLINE_RULE_ROTATION_TOLERANCE_DEG ||
+      normalizedRotation >= 180 - UNDERLINE_RULE_ROTATION_TOLERANCE_DEG;
+    if (!isAxisAligned) continue;
+
+    const corners = [
+      applyMatrixToPoint(full, rx, ry),
+      applyMatrixToPoint(full, rx + rw, ry),
+      applyMatrixToPoint(full, rx, ry + rh),
+      applyMatrixToPoint(full, rx + rw, ry + rh),
+    ];
+    const xs = corners.map((c) => c.x);
+    const ys = corners.map((c) => c.y);
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    const width = Math.max(...xs) - x;
+    const height = Math.max(...ys) - y;
+
+    if (width <= 0 || height <= 0) continue;
+    if (width < MIN_UNDERLINE_RULE_WIDTH) continue;
+    if (height > MAX_UNDERLINE_RULE_HEIGHT) continue;
+    if (width / height < MIN_UNDERLINE_ASPECT_RATIO) continue;
+
+    results.push({ x, y, width, height });
+  }
+
+  return results;
+}
+
 /**
  * Reads an uploaded PDF file and converts each page into a Page object.
  *
- * Two things happen per page, in order:
+ * Three things happen per page, in order:
  *  1. The page is rasterized to an image via pdf.js (as before) and kept
  *     as backgroundImage, so layout, images, vector art, etc. all still
  *     look correct.
@@ -144,6 +343,11 @@ function normalizeGlyphs(text: string): string {
  *     glyphs showing through underneath the new editable text, each
  *     extracted line's bounding box is painted over with white on the
  *     raster background before it's exported.
+ *  3. The page's raw drawing commands are scanned for thin filled
+ *     rectangles that look like underline rules (see
+ *     detectUnderlineRules above) and each one is converted into a real,
+ *     draggable/resizable isUnderline RectObject rather than being left
+ *     as a static pixel in the raster background.
  *
  * Every visual LINE in the PDF becomes exactly one TextObject, not one
  * per pdf.js text item. pdf.js splits a line into several separate items
@@ -158,8 +362,9 @@ function normalizeGlyphs(text: string): string {
  * misalign, since the whole line is measured, laid out, and rendered as
  * a single piece of text. The trade-off is that a line can only carry one
  * font style, so a line that mixes styles (e.g. a link in the middle of
- * a sentence, rather than on its own line) will render uniformly in the
- * first run's style rather than preserving the mid-line styling change.
+ * a sentence, rather than on its own line) will render uniformly in one
+ * run's style rather than preserving the mid-line styling change -- see
+ * buildMergedSegment for which run's style that ends up being and why.
  *
  * Multi-column layouts (e.g. a resume with a sidebar) add a second
  * wrinkle: two runs that happen to share a baseline can belong to two
@@ -181,9 +386,20 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
     // before its own responsive zoom is applied.
     const unscaledViewport = pdfPage.getViewport({ scale: 1 });
 
+    // Fetched early and deliberately -- getOperatorList() is what
+    // actually loads each font used on this page into pdfPage.commonObjs
+    // with its real, authoritative bold/italic flags (parsed by pdf.js
+    // itself from the font's own FontDescriptor), which extractTextRuns
+    // below needs. Without this call first, commonObjs.has() for any
+    // font on the page returns false and pdf.js throws if you try to
+    // .get() it anyway -- see mapFont's own comment for why this matters
+    // and what it replaces. This same result also feeds
+    // detectUnderlineRules further down, so it isn't fetched twice.
+    const opList = await pdfPage.getOperatorList();
+
     // Extract raw pdf.js text runs first (in unscaled/point space).
     const textContent = await pdfPage.getTextContent();
-    const rawRuns = extractTextRuns(textContent, unscaledViewport);
+    const rawRuns = extractTextRuns(textContent, unscaledViewport, pdfPage);
 
     // Attach any link the PDF itself defines to each raw run, before
     // merging -- matching against each run's own (small, precise)
@@ -223,6 +439,11 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
     // object in the first place.
     capWidthsAgainstNearbyContent(lines);
 
+    // Find any underline rules drawn on this page -- see
+    // detectUnderlineRules's own comment for the full reasoning. Reuses
+    // the operator list already fetched above (see its own comment).
+    const underlineRules = await detectUnderlineRules(opList, unscaledViewport);
+
     // Render the raster background at full quality.
     const renderViewport = pdfPage.getViewport({ scale: RENDER_SCALE });
     const canvas = window.document.createElement('canvas');
@@ -255,8 +476,20 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
         bounds.height * RENDER_SCALE
       );
     }
+    // Same erase pass, extended to also blank out every detected
+    // underline rule's footprint -- each one is becoming its own real,
+    // separately-rendered RectObject below, so the static pixels it used
+    // to occupy in the raster background need to go, or the page would
+    // show both the new draggable bar AND the old fixed one underneath.
+    for (const rule of underlineRules) {
+      const x = rule.x - UNDERLINE_RULE_ERASE_PADDING;
+      const y = rule.y - UNDERLINE_RULE_ERASE_PADDING;
+      const width = rule.width + UNDERLINE_RULE_ERASE_PADDING * 2;
+      const height = rule.height + UNDERLINE_RULE_ERASE_PADDING * 2;
+      ctx.fillRect(x * RENDER_SCALE, y * RENDER_SCALE, width * RENDER_SCALE, height * RENDER_SCALE);
+    }
 
-    const objects: TextObject[] = lines.map((line) => ({
+    const textObjects: TextObject[] = lines.map((line) => ({
       id: nanoid(),
       type: 'text',
       x: line.x,
@@ -275,6 +508,30 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
       align: 'left',
       link: line.link,
     }));
+
+    // Each detected rule becomes a real underline object -- same shape
+    // the toolbar's "+ Underline" button creates (see Toolbar.tsx's
+    // addUnderline), so it's draggable/resizable (length-only, per
+    // PdfCanvas.tsx's isUnderline resize handling) exactly like a
+    // manually-added one, just pre-populated at the position/length the
+    // original PDF actually drew it at.
+    const underlineObjects: RectObject[] = underlineRules.map((rule) => ({
+      id: nanoid(),
+      type: 'rect',
+      isUnderline: true,
+      x: rule.x,
+      y: rule.y,
+      width: rule.width,
+      height: rule.height,
+      rotation: 0,
+      opacity: 1,
+      fill: '#111111',
+      stroke: '#111111',
+      strokeWidth: 0,
+      cornerRadius: 0,
+    }));
+
+    const objects: PageObject[] = [...textObjects, ...underlineObjects];
 
     pages.push({
       id: nanoid(),
@@ -444,13 +701,17 @@ function gapCrossesGutter(gapStart: number, gapEnd: number, gutters: XInterval[]
 // the seam entirely -- there's one piece of text per line, laid out and
 // rendered as one piece, the same way ordinary typed text would be.
 //
-// The merged line takes its position, font size, and style from its
-// first run. Any run in the line that had a link (see findLinkForRun)
-// makes the whole merged line a link -- seen in practice, links have
-// always sat on their own line rather than mid-sentence, so this hasn't
-// been an issue, but a line that both mixes styling *and* only partially
-// contains a link will have that link's clickable area cover the entire
-// line, not just the originally-linked words.
+// The merged line takes its position from its first run and its style
+// from whichever run buildMergedSegment picks as "primary" (see that
+// function's own comment -- normally the first run too, except for
+// bulleted lines, where the bullet glyph itself is usually the first
+// run and picking it would give the entire line the wrong font). Any
+// run in the line that had a link (see findLinkForRun) makes the whole
+// merged line a link -- seen in practice, links have always sat on their
+// own line rather than mid-sentence, so this hasn't been an issue, but a
+// line that both mixes styling *and* only partially contains a link will
+// have that link's clickable area cover the entire line, not just the
+// originally-linked words.
 //
 // Only non-rotated runs are merged this way -- rotated text (stamps,
 // sidebars) is rare enough, and "same line" is a much fuzzier concept for
@@ -656,6 +917,30 @@ function buildMergedSegment(segment: ExtractedRun[]): ExtractedRun {
   const first = segment[0];
   const last = segment[segment.length - 1];
 
+  // Choose the run whose actual text is LONGEST as the style source for
+  // the whole merged line, rather than always `first`. PDF bullet lists
+  // very often draw the bullet glyph itself (•, ▪, etc.) as its own
+  // separate run in a symbol font (Wingdings/Symbol) immediately before
+  // the sentence text that follows it. normalizeGlyphs (see above) fixes
+  // up the *character* pdf.js reports for that run, but the run's own
+  // font metadata is still whatever symbol font drew it -- mapFont has
+  // no way to know that font was only ever meant to draw one bullet
+  // character, so it falls back to Helvetica. Blindly taking `first`'s
+  // font for the ENTIRE merged segment (what this used to do) meant a
+  // bulleted line's single-character bullet run overrode the font for
+  // the rest of that whole sentence too, even though the sentence text
+  // itself uses the exact same serif font as every other paragraph on
+  // the page -- exactly the "bullet list font looks different" bug. The
+  // bullet run is always by far the shortest piece of text in the
+  // segment, so picking the longest run's style instead reliably lands
+  // on the real sentence font. For any ordinary (non-bulleted, unsplit)
+  // line this is still just `first`, since there's only one run to pick
+  // from -- so nothing changes for normal paragraphs/headings.
+  let primary = first;
+  for (const run of segment) {
+    if (run.text.trim().length > primary.text.trim().length) primary = run;
+  }
+
   let text = '';
   let link: string | undefined;
 
@@ -686,22 +971,22 @@ function buildMergedSegment(segment: ExtractedRun[]): ExtractedRun {
     width: last.x + last.width - first.x,
     height: Math.max(...segment.map((r) => r.height)),
     rotation: 0,
-    fontSize: first.fontSize,
+    fontSize: primary.fontSize,
     // The tallest font size among every run merged into this segment,
     // kept separate from the rendering fontSize above (which
-    // intentionally stays the first run's, so the merged segment renders
-    // in one uniform style). This is only used by erasePaddedBounds -- if
-    // a segment merges a smaller fragment with a taller one (e.g. a
-    // slightly larger amount in an invoice row), erasing based on just
-    // the first run's (possibly smaller) font size wasn't tall enough to
-    // fully cover the taller fragment's original glyphs, leaving a
-    // sliver of the original rasterized text visible behind/around the
-    // new text -- which reads as smudged/doubled, easy to mistake for
-    // "blurry."
+    // intentionally stays the primary run's, so the merged segment
+    // renders in one uniform style). This is only used by
+    // erasePaddedBounds -- if a segment merges a smaller fragment with a
+    // taller one (e.g. a slightly larger amount in an invoice row),
+    // erasing based on just the primary run's (possibly smaller) font
+    // size wasn't tall enough to fully cover the taller fragment's
+    // original glyphs, leaving a sliver of the original rasterized text
+    // visible behind/around the new text -- which reads as
+    // smudged/doubled, easy to mistake for "blurry."
     eraseFontSize: Math.max(...segment.map((r) => r.fontSize)),
-    fontFamily: first.fontFamily,
-    bold: first.bold,
-    italic: first.italic,
+    fontFamily: primary.fontFamily,
+    bold: primary.bold,
+    italic: primary.italic,
     link,
   };
 }
@@ -773,7 +1058,9 @@ interface ExtractedRun {
 // internally (and in its text-layer builder) to go from PDF text space to
 // viewport pixel space. Implemented locally rather than importing
 // pdfjs-dist's `Util.transform` since that helper isn't reliably exported
-// across pdfjs-dist versions/bundling setups.
+// across pdfjs-dist versions/bundling setups. Composes two MATRICES --
+// see applyMatrixToPoint above for the distinct operation of applying a
+// matrix to a single coordinate.
 function combineTransforms(m1: number[], m2: number[]): number[] {
   return [
     m1[0] * m2[0] + m1[2] * m2[1],
@@ -787,7 +1074,8 @@ function combineTransforms(m1: number[], m2: number[]): number[] {
 
 function extractTextRuns(
   textContent: Awaited<ReturnType<import('pdfjs-dist').PDFPageProxy['getTextContent']>>,
-  viewport: import('pdfjs-dist').PageViewport
+  viewport: import('pdfjs-dist').PageViewport,
+  pdfPage: import('pdfjs-dist').PDFPageProxy
 ): ExtractedRun[] {
   const runs: ExtractedRun[] = [];
 
@@ -814,7 +1102,19 @@ function extractTextRuns(
 
     const styleName = textItem.fontName;
     const style = styleName ? textContent.styles[styleName] : undefined;
-    const { fontFamily, bold, italic } = mapFont(style?.fontFamily, styleName);
+    // The font actually loaded for this run, if pdf.js has resolved it
+    // yet -- see mapFont's own comment for why this, not
+    // style/styleName, is the real source of truth for bold/italic.
+    // commonObjs.has() must be checked first: calling .get() on a font
+    // id that hasn't been resolved throws rather than returning
+    // undefined (confirmed against pdf.js's actual behavior). By the
+    // time this runs, pdfFileToPages has already awaited
+    // getOperatorList() once for the whole page specifically so every
+    // font used on it is resolved by now -- this check is a defensive
+    // fallback for the rare font pdf.js couldn't resolve at all (e.g. a
+    // malformed embedded font), not the expected common case.
+    const fontObj = styleName && pdfPage.commonObjs.has(styleName) ? pdfPage.commonObjs.get(styleName) : undefined;
+    const { fontFamily, bold, italic } = mapFont(style?.fontFamily, styleName, fontObj);
 
     runs.push({
       // Normalize symbol-font bullet/marker glyphs to real Unicode
@@ -837,21 +1137,40 @@ function extractTextRuns(
 
 // pdf.js gives generic CSS-style family hints (e.g. "sans-serif",
 // "serif", "monospace") plus the PDF's internal font name, rather than
-// the embedded font itself -- so this is a best-effort approximation
-// mapped onto our editor's existing web-safe font list, not an exact
-// match to the original PDF's typeface.
+// the embedded font itself -- so fontFamily below is still a best-effort
+// approximation mapped onto our editor's existing web-safe font list,
+// not an exact match to the original PDF's typeface.
+//
+// bold/italic, however, no longer come from a name-string guess at all
+// when a loaded font object is available (the common case -- see
+// extractTextRuns' own comment on commonObjs). `pdfFontName` here is
+// USELESS for bold/italic detection: for a genuinely bold PDF standard
+// font ("Helvetica-Bold"), pdf.js's getTextContent() reports fontName as
+// its own internal, opaque object id (something like "g_d0_f1"), not
+// the font's real name -- verified directly against pdf.js's actual
+// output. That id never contains "bold" or "italic" no matter what the
+// underlying font actually is, so the old bold/italic regex against it
+// was, in practice, blind to the overwhelming majority of real bold
+// text -- which is why headings that were genuinely bold in the source
+// PDF were rendering at regular weight here. `fontObj` (pdf.js's loaded
+// font object, see extractTextRuns) instead exposes `.bold`/`.black`/
+// `.italic` as real booleans, parsed by pdf.js itself from the font's
+// actual FontDescriptor (its ForceBold flag, weight class, etc.) -- the
+// authoritative source, not a guess. The name-string regex is kept only
+// as a fallback for the rare case no font object could be resolved.
 function mapFont(
   cssFamily: string | undefined,
-  pdfFontName: string | undefined
+  pdfFontName: string | undefined,
+  fontObj?: { name?: string; fallbackName?: string; bold?: boolean; black?: boolean; italic?: boolean }
 ): { fontFamily: string; bold: boolean; italic: boolean } {
-  const hint = `${cssFamily ?? ''} ${pdfFontName ?? ''}`.toLowerCase();
+  const hint = `${cssFamily ?? ''} ${pdfFontName ?? ''} ${fontObj?.name ?? ''} ${fontObj?.fallbackName ?? ''}`.toLowerCase();
 
   let fontFamily = 'Helvetica';
   if (hint.includes('mono')) fontFamily = 'Courier New';
   else if (hint.includes('serif') && !hint.includes('sans')) fontFamily = 'Times New Roman';
 
-  const bold = /bold|black|heavy/.test(hint);
-  const italic = /italic|oblique/.test(hint);
+  const bold = fontObj ? !!(fontObj.bold || fontObj.black) : /bold|black|heavy/.test(hint);
+  const italic = fontObj ? !!fontObj.italic : /italic|oblique/.test(hint);
 
   return { fontFamily, bold, italic };
 }

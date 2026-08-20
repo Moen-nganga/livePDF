@@ -8,6 +8,7 @@ interface AuthState {
   fetchMe: () => Promise<void>;
   requestMagicLink: (email: string) => Promise<{ ok: boolean; error?: string }>;
   verifyToken: (token: string) => Promise<{ ok: boolean; error?: string }>;
+  loginWithGoogleCredential: (credential: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => Promise<void>;
 }
 
@@ -40,6 +41,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'This link is invalid or has expired' };
+    }
+  },
+
+  // Used by the GoogleOneTap component -- takes the signed JWT Google's
+  // prompt hands back after the user picks an account, sends it to the
+  // backend for verification, and updates store state the same way
+  // verifyToken does above so the rest of the app can't tell which sign-in
+  // path was used.
+  loginWithGoogleCredential: async (credential: string) => {
+    try {
+      const user = await api.googleOneTapLogin(credential);
+      set({ user, status: 'authenticated' });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Google sign-in failed' };
     }
   },
 

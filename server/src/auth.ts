@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { nanoid } from 'nanoid';
+import { OAuth2Client } from 'google-auth-library';
 import { usersRepo, magicLinksRepo, sessionsRepo, documentsRepo } from './db.js';
 import { sendMagicLinkEmail } from './email.js';
 
@@ -43,6 +44,14 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? '';
 // Cloud Console for this OAuth client, including scheme, host, and path.
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ?? `${APP_URL}/api/auth/google/callback`;
+
+// Used to verify the JWT ("credential") that Google's One Tap prompt hands
+// back to the frontend directly (no redirect round-trip). Same GOOGLE_CLIENT_ID
+// as the redirect flow above -- One Tap and the redirect flow are two
+// different ways of authenticating against the same OAuth client, and both
+// funnel into establishSession() below so the resulting session is
+// identical either way.
+const googleOneTapClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // Short-lived cookies used only to survive the redirect round-trip to
 // Google and back -- not related to the long-lived session cookie above.
@@ -99,9 +108,11 @@ async function refreshSession(res: express.Response, token: string) {
   setSessionCookie(res, token); // re-sends the cookie with a renewed maxAge
 }
 
-// Shared by both the magic-link /verify route and the Google OAuth
-// callback -- creates the session row + cookie and claims any anonymous
-// device documents onto the now-known user.
+// Shared by the magic-link /verify route, the Google OAuth redirect
+// callback, AND the Google One Tap route below -- creates the session row
+// + cookie and claims any anonymous device documents onto the now-known
+// user. All three sign-in paths converge here so the resulting session
+// looks identical no matter which one the user took.
 async function establishSession(
   res: express.Response,
   userId: string,
@@ -328,6 +339,58 @@ authRouter.get('/google/callback', async (req, res) => {
   } catch (err) {
     console.error('Google OAuth callback failed:', err);
     res.redirect(`${APP_URL}/?authError=google`);
+  }
+});
+
+// --- Google One Tap (Identity Services) ---
+//
+// Unlike the redirect flow above, this is fetch-based: the frontend loads
+// Google's client script, which renders the account-chooser prompt
+// in-place (no navigation) and hands back a signed JWT ("credential")
+// when the user picks an account. That JWT is opaque to us until we
+// verify its signature against Google's public keys -- which is what
+// verifyIdToken below does -- so, unlike the redirect flow, we DO need to
+// check the signature ourselves here rather than trusting a
+// server-to-server exchange.
+authRouter.post('/google/onetap', async (req, res) => {
+  const credential = req.body?.credential;
+  const deviceId = req.body?.deviceId;
+
+  if (typeof credential !== 'string') {
+    return res.status(400).json({ error: 'Missing credential' });
+  }
+  if (!GOOGLE_CLIENT_ID) {
+    console.error('Google One Tap is not configured (missing GOOGLE_CLIENT_ID)');
+    return res.status(500).json({ error: 'Google Sign-In is not configured' });
+  }
+
+  try {
+    const ticket = await googleOneTapClient.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+
+    if (!payload?.email || !payload.email_verified) {
+      return res.status(400).json({ error: 'google_unverified' });
+    }
+
+    const normalizedEmail = payload.email.toLowerCase();
+
+    // Same find-or-create path both other sign-in methods use, so a user
+    // who's signed in via magic link, the redirect flow, and One Tap with
+    // the same email always resolves to one account.
+    const user = await usersRepo.findOrCreate(normalizedEmail, nanoid());
+
+    await establishSession(res, user.id, typeof deviceId === 'string' ? deviceId : null);
+
+    res.json({ ok: true, user: { id: user.id, email: user.email, isAdmin: isAdminEmail(user.email) } });
+  } catch (err) {
+    // verifyIdToken throws on a bad signature, expired token, wrong
+    // audience, etc. -- all of which just mean "reject this attempt",
+    // not a server error.
+    console.error('Google One Tap verification failed:', err);
+    res.status(400).json({ error: 'Invalid Google credential' });
   }
 });
 

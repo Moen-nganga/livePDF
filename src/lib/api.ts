@@ -220,6 +220,22 @@ export const api = {
     return data.user;
   },
 
+  // Verifies the JWT credential handed back by Google's One Tap prompt.
+  // Mirrors verifyMagicLink above (same deviceId-claiming behavior on the
+  // backend) but hits a different endpoint since the credential itself is
+  // a signed Google JWT rather than our own magic-link token.
+  async googleOneTapLogin(credential: string): Promise<AuthUser> {
+    const res = await fetch(`${API_BASE}/api/auth/google/onetap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ credential, deviceId: getDeviceId() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? 'Google sign-in failed');
+    return data.user;
+  },
+
   async getMe(): Promise<AuthUser | null> {
     const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
     if (!res.ok) return null;
