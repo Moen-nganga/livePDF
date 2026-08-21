@@ -468,7 +468,7 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
     // patch instead of blending in.
     ctx.fillStyle = '#ffffff';
     for (const line of lines) {
-      const bounds = erasePaddedBounds(line);
+      const bounds = erasePaddedBounds(line, unscaledViewport.width);
       ctx.fillRect(
         bounds.x * RENDER_SCALE,
         bounds.y * RENDER_SCALE,
@@ -494,7 +494,7 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
       type: 'text',
       x: line.x,
       y: line.y,
-      width: paddedWidth(line),
+      width: paddedWidth(line, unscaledViewport.width),
       height: line.height,
       rotation: line.rotation,
       opacity: 1,
@@ -552,10 +552,23 @@ export async function pdfFileToPages(file: File): Promise<Page[]> {
 // the padded ideal: running past the page edge, or (see
 // capWidthsAgainstNearbyContent) reaching into where other nearby
 // content on the page starts -- whichever is tighter wins.
-function paddedWidth(line: ExtractedRun): number {
+//
+// `pageWidth` caps the result so it can never reach or exceed the page's
+// own width. Without this, a line that already runs close to the full
+// page width (a common case for a single-column paragraph/sentence) could
+// end up with a padded width >= pageWidth once the 25% margin is added on
+// top -- and PdfCanvas.tsx's clampBoundsToPage treats width >= page.width
+// as "this box can never move," permanently pinning it to the left edge
+// the very first time it's dragged. Capping here means that trap can
+// never be triggered by an imported PDF in the first place.
+const PAGE_EDGE_SAFETY_GAP = 2;
+
+function paddedWidth(line: ExtractedRun, pageWidth: number): number {
   const padded = line.width + Math.max(line.width * WIDTH_PADDING_RATIO, MIN_WIDTH_PADDING);
-  if (line.maxWidthNeighbor === undefined) return padded;
-  return Math.max(1, Math.min(padded, line.maxWidthNeighbor));
+  let capped = padded;
+  if (line.maxWidthNeighbor !== undefined) capped = Math.min(capped, line.maxWidthNeighbor);
+  const maxAgainstPage = Math.max(1, pageWidth - line.x - PAGE_EDGE_SAFETY_GAP);
+  return Math.max(1, Math.min(capped, maxAgainstPage));
 }
 
 // Hard safety net, separate from and in addition to mergeRunsPerLine's
@@ -1005,8 +1018,15 @@ function buildMergedSegment(segment: ExtractedRun[]): ExtractedRun {
 // uniformly to every line regardless of what it actually contains. The
 // fixed ratios are kept only as a fallback for the rare case a browser's
 // TextMetrics doesn't expose actualBoundingBox{Ascent,Descent}.
-function erasePaddedBounds(line: ExtractedRun): { x: number; y: number; width: number; height: number } {
-  const width = paddedWidth(line);
+//
+// `pageWidth` is threaded through to paddedWidth (see its own comment)
+// so the erase rectangle always matches the same, page-capped width the
+// TextObject itself gets -- keeping the two in sync.
+function erasePaddedBounds(
+  line: ExtractedRun,
+  pageWidth: number
+): { x: number; y: number; width: number; height: number } {
+  const width = paddedWidth(line, pageWidth);
   const eraseFontSize = line.eraseFontSize ?? line.fontSize;
   const measured = measureTextMetrics(line.text, eraseFontSize, line.fontFamily, line.bold, line.italic);
   const ascent = measured ? measured.ascent * ERASE_SAFETY_MARGIN_RATIO : eraseFontSize * ERASE_ASCENT_RATIO;

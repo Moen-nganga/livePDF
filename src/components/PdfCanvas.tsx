@@ -87,8 +87,20 @@ function objBounds(o: { x: number; y: number; width: number; height: number }): 
 function clampBoundsToPage<T extends Bounds>(b: T, page: { width: number; height: number }): T {
   const width = Math.min(b.width, page.width);
   const height = Math.min(b.height, page.height);
-  const x = Math.min(Math.max(b.x, 0), Math.max(0, page.width - width));
-  const y = Math.min(Math.max(b.y, 0), Math.max(0, page.height - height));
+  // When the (possibly just-shrunk) width/height still fills the entire
+  // page, the "valid range" for x/y -- [0, page.width - width] -- collapses
+  // to the single point 0. Previously x/y were unconditionally clamped into
+  // that range, which meant an object whose stored width happened to be
+  // >= page.width (this can happen for PDF-extracted text lines -- see
+  // pdfUpload.ts's paddedWidth) got its x silently forced to 0 on every
+  // single move/resize, with no way to ever drag it away from the left
+  // edge again: the same oversized width kept re-triggering the same
+  // collapse forever. There's no x that keeps a too-wide box fully
+  // on-page, so in that case we leave position untouched instead of
+  // picking an arbitrary (and sticky) 0 -- the SVG clipPath backstop
+  // still guarantees nothing paints past the page edge either way.
+  const x = width >= page.width ? b.x : Math.min(Math.max(b.x, 0), page.width - width);
+  const y = height >= page.height ? b.y : Math.min(Math.max(b.y, 0), page.height - height);
   return { ...b, x, y, width, height };
 }
 
@@ -256,6 +268,12 @@ interface Interaction {
   // text object, whose real coordinates are essentially never grid-
   // aligned) on every single click.
   moved: boolean;
+  // The most recent `live` bounds during this interaction that did NOT
+  // overlap another text/link object. Updated every move as long as
+  // `live` is currently valid. Lets onUp fall back to "the last spot
+  // along this exact drag that was still fine" instead of a possibly
+  // far-away, stale position -- see onUp for details.
+  lastValidLive: Bounds & { rotation: number };
 }
 
 interface Drawing {
@@ -396,15 +414,17 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       if (!svg || readOnly) return;
       const p = toSvgPoint(svg, clientX, clientY);
       setSelectedObjectId(obj.id);
+      const startBounds = { x: obj.x, y: obj.y, width: obj.width, height: obj.height, rotation: obj.rotation };
       setInteraction({
         id: obj.id,
         mode,
         handle,
         startPointer: p,
-        startBounds: { x: obj.x, y: obj.y, width: obj.width, height: obj.height, rotation: obj.rotation },
-        live: { x: obj.x, y: obj.y, width: obj.width, height: obj.height, rotation: obj.rotation },
+        startBounds,
+        live: startBounds,
         overlapping: false,
         moved: false,
+        lastValidLive: startBounds,
       });
     },
     [readOnly, setSelectedObjectId]
@@ -502,7 +522,11 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
           );
         }
 
-        return { ...cur, live: next, overlapping, moved };
+        // Keep a running "last spot along this drag that was actually
+        // fine" -- see the Interaction.lastValidLive field comment.
+        const lastValidLive = overlapping ? cur.lastValidLive : next;
+
+        return { ...cur, live: next, overlapping, moved, lastValidLive };
       });
     }
 
@@ -522,10 +546,16 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         let final = cur.live;
 
         if (isTextObj(obj) && cur.overlapping) {
-          // Revert to the last position/size this object had without
-          // overlapping anything, rather than committing an overlapping drop.
-          const fallback = lastGoodBoundsRef.current.get(obj.id);
-          if (fallback) final = { ...final, ...fallback };
+          // Land on the last position/size THIS drag actually passed
+          // through without overlapping anything, rather than teleporting
+          // all the way back to wherever the object started. This is what
+          // makes the box feel like it "stops" right at the boundary the
+          // user pushed it up against, instead of snapping back to square
+          // one. Only if this drag never had a single valid moment (e.g.
+          // it started already overlapping, from bad/legacy data) do we
+          // fall back to the last confirmed-good bounds from a previous
+          // interaction.
+          final = { ...final, ...(cur.lastValidLive ?? lastGoodBoundsRef.current.get(obj.id)) };
         }
 
         final = { ...clampBoundsToPage(final, page), rotation: final.rotation };
