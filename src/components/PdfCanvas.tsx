@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as fabric from 'fabric';
 import { nanoid } from 'nanoid';
 import { useEditorStore } from '../store/editorStore';
 import type { Page, PageObject } from '../types/document';
+import { Ruler, RULER_THICKNESS } from './Ruler';
 
 export const ZOOM = 1; // 1 canvas px = 1 PDF point at 100%; toolbar can scale this later
 
@@ -24,9 +25,28 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
 
   const drawingRef = useRef<{ rect: fabric.Rect; startX: number; startY: number } | null>(null);
 
+  // Tracks the canvas element's current on-screen pixel size, kept in sync
+  // with fitToContainer's responsive scaling below, so the ruler strips
+  // (rendered as siblings, not children, of the fabric canvas) always
+  // span exactly the same width/height as the canvas itself rather than
+  // drifting out of alignment on narrow viewports.
+  const [canvasDims, setCanvasDims] = useState({ width: page.width, height: page.height });
+
+  // Bounding box (in the same post-zoom pixel space as canvasDims) of the
+  // currently selected object, used to highlight that object's extent on
+  // both rulers. null when nothing is selected.
+  const [selectionBounds, setSelectionBounds] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
+
+    setSelectionBounds(null);
 
     const canvasEl = window.document.createElement('canvas');
     wrapper.appendChild(canvasEl);
@@ -39,6 +59,22 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     });
     canvas.skipTargetFind = readOnly;
     fabricRef.current = canvas;
+
+    // Reads the active object's on-screen bounding box (post viewport-zoom,
+    // same pixel space fitToContainer sizes the canvas element to) and
+    // mirrors it into React state so the rulers can draw a highlight over
+    // it. `getBoundingRect()` defaults to viewport-relative coordinates
+    // (i.e. already scaled the same way canvasDims is below), which is
+    // exactly the space Ruler's highlightRange expects.
+    function syncSelectionBounds() {
+      const active = canvas.getActiveObject();
+      if (!active) {
+        setSelectionBounds(null);
+        return;
+      }
+      const rect = active.getBoundingRect();
+      setSelectionBounds({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+    }
 
     // Fits the canvas to whatever width is actually available (the page's
     // parent container -- typically App.tsx's <main className=
@@ -76,6 +112,10 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
       canvas.setDimensions({ width: page.width * scale, height: page.height * scale });
       canvas.setZoom(scale);
       canvas.requestRenderAll();
+      setCanvasDims({ width: page.width * scale, height: page.height * scale });
+      // The canvas' own pixel size just changed under the active object,
+      // so refresh its highlighted extent on the rulers to match.
+      syncSelectionBounds();
     }
 
     fitToContainer();
@@ -86,8 +126,18 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     canvas.on('selection:created', (e) => {
       const obj = e.selected?.[0] as (fabric.Object & { id?: string }) | undefined;
       setSelectedObjectId(obj?.id ?? null);
+      syncSelectionBounds();
     });
-    canvas.on('selection:cleared', () => setSelectedObjectId(null));
+    canvas.on('selection:updated', () => syncSelectionBounds());
+    canvas.on('selection:cleared', () => {
+      setSelectedObjectId(null);
+      setSelectionBounds(null);
+    });
+    // Keep the ruler highlight tracking live while the user drags/resizes,
+    // not just after the change is committed on mouse-up.
+    canvas.on('object:moving', () => syncSelectionBounds());
+    canvas.on('object:scaling', () => syncSelectionBounds());
+    canvas.on('object:rotating', () => syncSelectionBounds());
 
     canvas.on('object:modified', (e) => {
       const obj = e.target as fabric.Object & { id?: string };
@@ -99,6 +149,7 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
         height: (obj.height ?? 0) * (obj.scaleY ?? 1),
         rotation: obj.angle ?? 0,
       });
+      syncSelectionBounds();
     });
 
     canvas.on('mouse:down', (e) => {
@@ -468,11 +519,38 @@ export function PdfCanvas({ page, readOnly = false }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [page.id, removeObject]);
 
+  const hRange = selectionBounds
+    ? { start: selectionBounds.left, end: selectionBounds.left + selectionBounds.width }
+    : null;
+  const vRange = selectionBounds
+    ? { start: selectionBounds.top, end: selectionBounds.top + selectionBounds.height }
+    : null;
+
   return (
     <div
-      ref={wrapperRef}
-      style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.15)', background: '#fff' }}
-    />
+      style={{
+        display: 'inline-grid',
+        gridTemplateColumns: `${RULER_THICKNESS}px ${canvasDims.width}px`,
+        gridTemplateRows: `${RULER_THICKNESS}px ${canvasDims.height}px`,
+      }}
+    >
+      {/* Corner square where the two rulers meet. */}
+      <div
+        style={{
+          width: RULER_THICKNESS,
+          height: RULER_THICKNESS,
+          background: '#fafafa',
+          borderRight: '1px solid #ddd',
+          borderBottom: '1px solid #ddd',
+        }}
+      />
+      <Ruler orientation="horizontal" lengthPx={canvasDims.width} highlightRange={hRange} />
+      <Ruler orientation="vertical" lengthPx={canvasDims.height} highlightRange={vRange} />
+      <div
+        ref={wrapperRef}
+        style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.15)', background: '#fff' }}
+      />
+    </div>
   );
 }
 

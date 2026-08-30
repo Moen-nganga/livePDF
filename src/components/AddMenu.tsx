@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react';
-import { nanoid } from 'nanoid';
+import { useEffect } from 'react';
 import { useEditorStore } from '../store/editorStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useImageAdd } from '../hooks/useImageAdd.tsx';
-import type { PageObject } from '../types/document';
 
 const MENU_ID = 'add';
 
@@ -13,7 +11,6 @@ export function AddMenu() {
   const open = openMenuId === MENU_ID;
   const t = useI18nStore((s) => s.t);
 
-  const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const { triggerImagePick, fileInputElement } = useImageAdd();
 
   useEffect(() => {
@@ -31,11 +28,6 @@ export function AddMenu() {
   function handleImage() {
     setOpenMenuId(null);
     triggerImagePick();
-  }
-
-  function handleTable() {
-    setOpenMenuId(null);
-    setTableDialogOpen(true);
   }
 
   // Hovering only switches menus once one is already open by a click —
@@ -76,21 +68,11 @@ export function AddMenu() {
               icon="🖼"
               onClick={handleImage}
             />
-            <MenuItem
-              label={t('addMenu.table')}
-              description={t('addMenu.tableDescription')}
-              icon="⊞"
-              onClick={handleTable}
-            />
           </div>
         )}
       </div>
 
       {fileInputElement}
-
-      {tableDialogOpen && (
-        <TableDialog onClose={() => setTableDialogOpen(false)} />
-      )}
     </>
   );
 }
@@ -134,196 +116,3 @@ function MenuItem({
     </button>
   );
 }
-
-function TableDialog({ onClose }: { onClose: () => void }) {
-  const t = useI18nStore((s) => s.t);
-  const [rows, setRows] = useState(3);
-  const [cols, setCols] = useState(3);
-  const [hasHeader, setHasHeader] = useState(true);
-  const [error, setError] = useState('');
-
-  const document = useEditorStore((s) => s.document);
-  const activePageIndex = useEditorStore((s) => s.activePageIndex);
-  const addObjects = useEditorStore((s) => s.addObjects);
-
-  const activePage = document?.pages[activePageIndex];
-
-  function validate(r: number, c: number) {
-    if (r < 1 || r > 20) return t('addMenu.rowsError');
-    if (c < 1 || c > 10) return t('addMenu.colsError');
-    return '';
-  }
-
-  function handleInsert() {
-    const err = validate(rows, cols);
-    if (err) { setError(err); return; }
-    if (!activePage) return;
-
-    const tableId = nanoid(); // shared tag — all cells with this id move together
-    const margin = 60;
-    const tableWidth = Math.min(activePage.width - margin * 2, 400);
-    const cellWidth = tableWidth / cols;
-    const headerHeight = 36;
-    const bodyHeight = 32;
-    const startX = margin;
-    const startY = 80;
-
-    const objects: PageObject[] = [];
-
-    for (let r = 0; r < rows; r++) {
-      const isHeader = hasHeader && r === 0;
-      const rowH = isHeader ? headerHeight : bodyHeight;
-      const rowY = startY + (isHeader ? 0 : headerHeight + (r - 1) * bodyHeight);
-      const localY = hasHeader ? rowY : startY + r * bodyHeight;
-
-      for (let c = 0; c < cols; c++) {
-        const cellX = startX + c * cellWidth;
-        const y = hasHeader ? rowY : localY;
-
-        // Cell background rect
-        objects.push({
-          id: nanoid(),
-          type: 'rect',
-          tableId,
-          x: cellX,
-          y,
-          width: cellWidth,
-          height: rowH,
-          rotation: 0,
-          opacity: 1,
-          fill: isHeader ? '#1a73e8' : (r % 2 === 0 ? '#ffffff' : '#f8f9fa'),
-          stroke: '#c4c7c5',
-          strokeWidth: 1,
-          cornerRadius: 0,
-        });
-
-        // Cell text — positioned at cell origin with full cell height so
-        // empty cells have the same hit area as their background rect.
-        // Visual centering is handled by Fabric's own text baseline alignment.
-        objects.push({
-          id: nanoid(),
-          type: 'text',
-          tableId,
-          x: cellX + 6,
-          y,
-          width: cellWidth - 12,
-          height: rowH,
-          rotation: 0,
-          opacity: 1,
-          text: isHeader ? t('addMenu.columnLabel', { n: c + 1 }) : '',
-          fontSize: 11,
-          fontFamily: 'Helvetica',
-          color: isHeader ? '#ffffff' : '#202124',
-          bold: isHeader,
-          italic: false,
-          strikethrough: false,
-          align: 'left',
-        });
-      }
-    }
-
-    addObjects(activePage.id, objects);
-    onClose();
-  }
-
-  // Live preview of what the table will look like
-  const PREVIEW_W = 240;
-  const PREVIEW_H = 120;
-  const cellW = PREVIEW_W / Math.max(cols, 1);
-  const cellH = PREVIEW_H / Math.max(rows, 1);
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.4)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 2000,
-      }}
-    >
-      <div
-        className="surface-card"
-        onClick={(e) => e.stopPropagation()}
-        style={{ padding: 24, width: 380 }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>{t('addMenu.insertTableTitle')}</h3>
-          <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 16, cursor: 'pointer' }}>✕</button>
-        </div>
-
-        {/* Live preview */}
-        <div style={{
-          width: PREVIEW_W, height: PREVIEW_H,
-          border: '1px solid var(--color-border)',
-          borderRadius: 4,
-          overflow: 'hidden',
-          margin: '0 auto 20px',
-          position: 'relative',
-        }}>
-          {Array.from({ length: rows }).map((_, r) =>
-            Array.from({ length: cols }).map((_, c) => (
-              <div key={`${r}-${c}`} style={{
-                position: 'absolute',
-                left: c * cellW,
-                top: r * cellH,
-                width: cellW,
-                height: cellH,
-                border: '1px solid #c4c7c5',
-                background: hasHeader && r === 0 ? '#e8f0fe' : 'white',
-              }} />
-            ))
-          )}
-        </div>
-
-        {/* Controls */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-            {t('addMenu.rows')}
-            <input
-              type="number"
-              min={1} max={20}
-              value={rows}
-              onChange={(e) => { setRows(Number(e.target.value)); setError(''); }}
-              style={{ width: '100%' }}
-            />
-          </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-            {t('addMenu.columns')}
-            <input
-              type="number"
-              min={1} max={10}
-              value={cols}
-              onChange={(e) => { setCols(Number(e.target.value)); setError(''); }}
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
-
-        <label style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          fontSize: 13, cursor: 'pointer', marginBottom: 16,
-        }}>
-          <input
-            type="checkbox"
-            checked={hasHeader}
-            onChange={(e) => setHasHeader(e.target.checked)}
-          />
-          {t('addMenu.headerRow')}
-        </label>
-
-        {error && (
-          <div style={{ fontSize: 12, color: 'var(--color-danger)', marginBottom: 12 }}>{error}</div>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose}>{t('common.cancel')}</button>
-          <button className="btn-accent" onClick={handleInsert}>{t('addMenu.insertTable')}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// No buildTable function needed — table rendering is done inline in
-// TableDialog.handleInsert via an offscreen HTML canvas.
