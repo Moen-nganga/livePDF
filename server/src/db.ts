@@ -36,13 +36,6 @@ export async function initDb(): Promise<void> {
       created_at BIGINT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS magic_links (
-      token TEXT PRIMARY KEY,
-      email TEXT NOT NULL,
-      expires_at BIGINT NOT NULL,
-      used BOOLEAN NOT NULL DEFAULT false
-    );
-
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -143,11 +136,6 @@ export const documentsRepo = {
     );
   },
 
-  // Counts documents created since `sinceMs`, scoped to either a signed-in
-  // user (once they've claimed documents onto their account) or an
-  // anonymous device. Used to enforce the free-tier weekly creation limit --
-  // deliberately counts every document (blank, template, or uploaded), since
-  // all three end up as a row in this table via the same PUT endpoint.
   async countCreatedSince(owner: { userId?: string; deviceId?: string }, sinceMs: number): Promise<number> {
     if (owner.userId) {
       const { rows } = await pool.query(
@@ -230,31 +218,6 @@ export const usersRepo = {
   },
 };
 
-export interface MagicLinkRow {
-  token: string;
-  email: string;
-  expires_at: number;
-  used: boolean;
-}
-
-export const magicLinksRepo = {
-  async create(row: MagicLinkRow): Promise<void> {
-    await pool.query(
-      'INSERT INTO magic_links (token, email, expires_at, used) VALUES ($1, $2, $3, $4)',
-      [row.token, row.email, row.expires_at, row.used]
-    );
-  },
-
-  async getByToken(token: string): Promise<MagicLinkRow | undefined> {
-    const { rows } = await pool.query('SELECT * FROM magic_links WHERE token = $1', [token]);
-    return rows[0];
-  },
-
-  async markUsed(token: string): Promise<void> {
-    await pool.query('UPDATE magic_links SET used = true WHERE token = $1', [token]);
-  },
-};
-
 export interface SessionRow {
   token: string;
   user_id: string;
@@ -302,9 +265,6 @@ export const subscriptionsRepo = {
     return rows[0];
   },
 
-  // Upserts on user_id -- both Stripe and Binance webhooks call this as
-  // the single place that actually grants/revokes plan access, so the two
-  // payment providers can't drift into different update logic.
   async upsert(row: Partial<SubscriptionRow> & { user_id: string }): Promise<void> {
     await pool.query(
       `INSERT INTO subscriptions (

@@ -23,17 +23,77 @@ interface SpellCheckResult {
   pageId: string;
   objectId: string;
   word: string;
-  /** 1-indexed line within the text object's own content (split on \n), not the page as a whole. */
   line: number;
 }
 
-// Counts newlines before a given character offset to find which line (1-
-// indexed) that offset falls on within a text object's own content. This
-// is about line breaks *within* one text box, not a page-wide line number
-// -- a page can have several separate text objects, each with their own
-// internal line 1, 2, 3...
-function lineNumberAt(text: string, charIndex: number): number {
-  return text.slice(0, charIndex).split('\n').length;
+// Shared offscreen canvas 2D context used only for text measurement below —
+// created once and reused rather than allocating a new <canvas> per word.
+let measureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureContext(): CanvasRenderingContext2D {
+  if (!measureCtx) {
+    const canvas = window.document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D canvas context unavailable');
+    measureCtx = ctx;
+  }
+  return measureCtx;
+}
+
+// Figures out which *rendered* line a character offset falls on for a given
+// text object. Text objects placed via the text tool are fabric.Textbox
+// instances, which soft-wrap to fit obj.width — the wrapping is entirely
+// visual, there's no '\n' in obj.text at the wrap points (only at explicit
+// paragraph breaks the user typed). Simply counting '\n' characters before
+// charIndex (the previous approach) always reported "line 1" for any word
+// past the first visual line of a wrapped paragraph — that's the "Line 1" /
+// "Line 1" bug where a misspelling on the second wrapped line was still
+// reported as line 1.
+//
+// This re-simulates Fabric's greedy word-wrap (fit words onto a line until
+// the next word would exceed obj.width, measured using the object's actual
+// font family/size/weight/style) to reconstruct the same line breaks Fabric
+// renders, then reports which line contains charIndex. It's an
+// approximation of Fabric's own algorithm — it doesn't special-case a
+// single word wider than obj.width, for instance — but it matches ordinary
+// prose closely and fixes the "everything is line 1" bug.
+function computeLineNumber(obj: TextObject, charIndex: number): number {
+  const ctx = getMeasureContext();
+  const style = obj.italic ? 'italic ' : '';
+  const weight = obj.bold ? 'bold ' : '';
+  ctx.font = `${style}${weight}${obj.fontSize}px ${obj.fontFamily}`;
+
+  const paragraphs = obj.text.split('\n');
+  let consumed = 0; // characters of obj.text consumed by prior paragraphs
+  let lineNumber = 0;
+
+  for (const paragraph of paragraphs) {
+    lineNumber++;
+    const words = paragraph.split(' ');
+    let currentLine = '';
+    let lineStartOffset = consumed;
+    let wordOffset = consumed;
+
+    for (const word of words) {
+      const candidate = currentLine ? `${currentLine} ${word}` : word;
+      if (currentLine && ctx.measureText(candidate).width > obj.width) {
+        // `word` doesn't fit on the current line — it wraps. Everything up
+        // through the end of currentLine belongs to the line we're on now.
+        if (charIndex <= lineStartOffset + currentLine.length) return lineNumber;
+        lineNumber++;
+        currentLine = word;
+        lineStartOffset = wordOffset;
+      } else {
+        currentLine = candidate;
+      }
+      wordOffset += word.length + 1; // +1 for the space separating words
+    }
+
+    const paragraphEnd = consumed + paragraph.length;
+    if (charIndex <= paragraphEnd) return lineNumber;
+    consumed = paragraphEnd + 1; // +1 for the '\n' separating paragraphs
+  }
+
+  return lineNumber || 1;
 }
 
 interface ToolbarProps {
@@ -54,15 +114,11 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   const { triggerImagePick, fileInputElement } = useImageAdd();
   const t = useI18nStore((s) => s.t);
 
-  const subscription = useSubscriptionStore((s) => s.subscription);
-  // Client-side gate only -- there's no server resource being consumed by
-  // adding a signature (unlike the weekly document-creation limit, which
-  // is enforced server-side too), so this restricts the UI but a
-  // technically determined free user could bypass it via devtools. Worth
-  // revisiting with a server-side check if this ever needs to be airtight.
-  const isPremium =
-    subscription?.status === 'active' &&
-    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
+  // Use the store's isPremium() rather than re-deriving it here, so admin
+  // accounts (isAdmin: true, no real subscription) bypass every gated tool
+  // in this toolbar the same way they already bypass the AI chat gate and
+  // the server-side checks in index.ts.
+  const isPremium = useSubscriptionStore((s) => s.isPremium());
 
   const activePage = document?.pages[activePageIndex];
   const selectedObject = activePage?.objects.find((o) => o.id === selectedObjectId);
@@ -101,7 +157,9 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
   const [spellCheckResults, setSpellCheckResults] = useState<SpellCheckResult[]>([]);
 
   const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
-  const [premiumPromptOpen, setPremiumPromptOpen] = useState(false);
+  // Which gated feature triggered the upgrade prompt -- drives the
+  // featureName shown in the dialog. null means the dialog is closed.
+  const [premiumPromptFeature, setPremiumPromptFeature] = useState<'signature' | 'spellcheck' | null>(null);
 
   function updateSelectedText(patch: Partial<TextObject>) {
     if (!activePage || !selectedText) return;
@@ -267,6 +325,15 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
   async function runSpellCheck() {
     if (!document) return;
+
+    // Spell check is a Premium feature per the plan copy -- gate it the
+    // same way as Signatures (client-side check + upgrade prompt) instead
+    // of letting it run unconditionally for any signed-in user.
+    if (!isPremium) {
+      setPremiumPromptFeature('spellcheck');
+      return;
+    }
+
     setSpellCheckOpen(true);
     setSpellCheckLoading(true);
     setSpellCheckError(null);
@@ -274,17 +341,11 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
     try {
       const results: SpellCheckResult[] = [];
-      // Sequential rather than Promise.all -- keeps things simple and the
-      // dictionary is memoized after the first call anyway, so there's no
-      // real perf cost to awaiting one page at a time.
       for (let pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
         const page = document.pages[pageIndex];
         for (const obj of page.objects) {
           if (obj.type !== 'text') continue;
           const misspelled = await findMisspelledWords(obj.text);
-          // One entry per unique word per text object -- jumping just
-          // selects the whole object anyway, so listing the same word
-          // twice because it appears twice in one box adds noise, not value.
           const seen = new Set<string>();
           for (const m of misspelled) {
             const key = m.word.toLowerCase();
@@ -295,7 +356,7 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
               pageId: page.id,
               objectId: obj.id,
               word: m.word,
-              line: lineNumberAt(obj.text, m.index),
+              line: computeLineNumber(obj, m.index),
             });
           }
         }
@@ -317,22 +378,15 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
   function handleSignatureClick() {
     if (!isPremium) {
-      setPremiumPromptOpen(true);
+      setPremiumPromptFeature('signature');
       return;
     }
     setSignatureDialogOpen(true);
   }
 
-  // Both draw and typed signatures arrive here as a plain PNG data URL --
-  // placed as a normal ImageObject, same as an uploaded image, so it needs
-  // no special handling anywhere else (export, dragging, resizing, delete
-  // all already work for images).
   function insertSignature(dataUrl: string, width: number, height: number) {
     if (!activePage) return;
     const { x, y } = nextOffset(activePage.objects.length);
-    // Signatures are typically placed at a modest, readable size regardless
-    // of how large the source canvas was -- cap the placed width so a
-    // wide typed name doesn't dominate the page, keeping aspect ratio.
     const maxWidth = 220;
     const scale = width > maxWidth ? maxWidth / width : 1;
     const obj: ImageObject = {
@@ -439,8 +493,11 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
 
       <Divider />
 
-      <button onClick={runSpellCheck} title={t('toolbar.checkSpellingTitle')}>
-        {t('toolbar.checkSpelling')}
+      <button
+        onClick={runSpellCheck}
+        title={isPremium ? t('toolbar.checkSpellingTitle') : t('toolbar.checkSpellingTitlePremium')}
+      >
+        {isPremium ? t('toolbar.checkSpelling') : t('toolbar.checkSpellingPremium')}
       </button>
 
       <Divider />
@@ -525,12 +582,16 @@ export function Toolbar({ onRequirePremium }: ToolbarProps) {
       {signatureDialogOpen && (
         <SignatureDialog onInsert={insertSignature} onClose={() => setSignatureDialogOpen(false)} />
       )}
-      {premiumPromptOpen && (
+      {premiumPromptFeature && (
         <PremiumRequiredDialog
-          featureName={t('toolbar.signaturesFeatureName')}
-          onClose={() => setPremiumPromptOpen(false)}
+          featureName={
+            premiumPromptFeature === 'signature'
+              ? t('toolbar.signaturesFeatureName')
+              : t('toolbar.spellCheckFeatureName')
+          }
+          onClose={() => setPremiumPromptFeature(null)}
           onUpgrade={() => {
-            setPremiumPromptOpen(false);
+            setPremiumPromptFeature(null);
             onRequirePremium?.();
           }}
         />
@@ -1039,11 +1100,6 @@ function WatermarkDialog({
   );
 }
 
-// Typographic scale rather than a flat 1..N count -- steps start tight at
-// the small end (where a couple points makes a visible difference) and
-// widen out at the large end (where headings/titles live), matching how
-// Word/Docs/Illustrator size pickers are laid out instead of just listing
-// consecutive integers.
 const FONT_SIZE_OPTIONS = [6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 80, 96];
 
 interface FontSizeDropdownProps {

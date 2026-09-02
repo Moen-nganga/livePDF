@@ -9,14 +9,6 @@ export interface PlanDisplay {
   features: string[];
 }
 
-// Keep priceUsd in sync with server/src/plans.ts -- this file is display
-// copy only, the server is the actual source of truth for what gets
-// charged (Stripe reads its own Price object; Binance reads
-// server/src/plans.ts's priceUsd directly).
-//
-// The features list here should track FEATURE_FLAGS in
-// types/subscription.ts / server/src/plans.ts -- both pro plans unlock
-// the same feature set today, just billed differently.
 const PRO_FEATURES = [
   'Unlimited number of PDFs that can be edited',
   'Unlimited number of Pages that can be added to a PDF',
@@ -45,8 +37,7 @@ export const PLANS: PlanDisplay[] = [
   },
 ];
 
-// Short label used in compact spots (AccountMenu's plan line) where the
-// full PlanDisplay card copy above would be too much.
+
 export const PLAN_LABELS: Record<PlanId, string> = {
   free: 'Free plan',
   pro_monthly: 'Pro Monthly',

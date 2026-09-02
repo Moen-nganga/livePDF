@@ -40,11 +40,6 @@ function useOnlineStatus() {
   return online;
 }
 
-// Tracks whether the viewport is at or below a "mobile" breakpoint, kept in
-// sync via a matchMedia listener (covers resize/rotation, not just the
-// size at mount). Same 640px threshold and pattern used in PageNav.tsx /
-// LandingScreen -- duplicated locally rather than shared since there's no
-// existing utils module to put it in yet.
 function useIsMobile(breakpoint = 640): boolean {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
@@ -61,11 +56,6 @@ function useIsMobile(breakpoint = 640): boolean {
   return isMobile;
 }
 
-// The app's handful of top-level "screens." Not a real router -- just an
-// enum used to tag each history entry so the browser back/forward buttons
-// can step between Landing / Auth / Upgrade / Editor instead of leaving
-// the app entirely (previously nothing ever called pushState, so there
-// was only ever one history entry for the whole app).
 type Screen = 'landing' | 'auth' | 'upgrade' | 'editor';
 
 function pushScreen(screen: Screen) {
@@ -73,11 +63,6 @@ function pushScreen(screen: Screen) {
   window.history.pushState({ screen }, '', window.location.href);
 }
 
-// Plain-text summary of a document's content, sent as context to the AI
-// chat widget so it can answer questions about what's actually on the
-// page. Deliberately text-only (skips image data entirely -- base64
-// image payloads would blow past the context size cap for no benefit,
-// since the model can't usefully reason about raw pixel data anyway).
 function buildDocumentContext(doc: PDFDocument): string {
   const lines: string[] = [`Document title: ${doc.title}`, `Pages: ${doc.pages.length}`];
   doc.pages.forEach((page, i) => {
@@ -105,45 +90,23 @@ export default function App() {
   const t = useI18nStore((s) => s.t);
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
-  const verifyToken = useAuthStore((s) => s.verifyToken);
   const logout = useAuthStore((s) => s.logout);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [showUpgradeScreen, setShowUpgradeScreen] = useState(false);
 
   const isMobile = useIsMobile();
-  // Mobile-only: the hamburger drawer holding File/Edit/Add/Help, the PDF
-  // Upload/Merge/Split actions, save status, and the account row. On
-  // desktop all of those render inline in the header instead, same as
-  // before this pass.
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const subscription = useSubscriptionStore((s) => s.subscription);
-  // Same client-side-only caveat as Toolbar's signature gating -- this
-  // just decides what the widget shows/allows in the UI. The real
-  // enforcement is server-side, in POST /api/chat's own premium check.
   const isPremium =
     subscription?.status === 'active' &&
     (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
-
-  // Show the landing screen on every fresh load, unless the URL contains a
-  // share token (in which case go straight into the shared document).
   const shareToken = new URLSearchParams(window.location.search).get('share');
-  // A magic-link redirect lands here as ?token=xxx (see auth.ts's
-  // request-link route, which builds the link as `${APP_URL}/auth/verify?token=...`
-  // — there's no react-router in this app, so "verify" isn't a real route,
-  // just a query param this component checks for on load, same as `share`).
-  const verifyTokenParam = new URLSearchParams(window.location.search).get('token');
-  const [verifying, setVerifying] = useState(!!verifyTokenParam);
-  const [showLanding, setShowLanding] = useState(!shareToken && !verifyTokenParam);
+  const [showLanding, setShowLanding] = useState(!shareToken);
   const online = useOnlineStatus();
   const { status: saveStatus, limitMessage, hasUnsavedChanges, saveNow } = useAutoSave();
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
-  // Register the service worker once, on mount — production only. In dev,
-  // the service worker's whole job (serve cached files instead of fetching)
-  // actively fights Vite's hot-reload and makes code changes appear not to
-  // apply even after a restart, which is confusing to debug. Real offline
-  // support only matters for the deployed app anyway.
   useEffect(() => {
     if (import.meta.env.PROD && 'serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {
@@ -152,35 +115,11 @@ export default function App() {
     }
   }, []);
 
-  // Check for an existing session on load (skipped entirely if we're about
-  // to consume a magic-link token below — that flow sets the user directly).
   useEffect(() => {
-    if (!verifyTokenParam) fetchMe();
+    fetchMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Consume a magic-link token from the URL, then strip it so a refresh
-  // doesn't try to re-verify an already-used (and now invalid) token.
-  useEffect(() => {
-    if (!verifyTokenParam) return;
-
-    (async () => {
-      const result = await verifyToken(verifyTokenParam);
-      const url = new URL(window.location.href);
-      url.searchParams.delete('token');
-      window.history.replaceState({}, '', url.toString());
-      if (!result.ok) {
-        alert(result.error ?? 'This sign-in link is invalid or has expired.');
-      }
-      setVerifying(false);
-      setShowLanding(!shareToken);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // On first load: if a share token is present in the URL, resolve it and
-  // skip the landing screen entirely. Otherwise the landing screen handles
-  // document selection and no auto-loading is needed here.
   useEffect(() => {
     if (!shareToken) return; // landing screen will handle document selection
     if (document) return;
@@ -203,19 +142,11 @@ export default function App() {
     if (document) cacheDocumentForOffline(document);
   }, [document]);
 
-  // Close the mobile drawer automatically if the viewport grows past the
-  // breakpoint (e.g. rotating a tablet to landscape) so it can't get stuck
-  // open behind the now-restored desktop header.
   useEffect(() => {
     if (!isMobile) setMobileMenuOpen(false);
   }, [isMobile]);
 
-  // Tag whatever screen we land on first (once the magic-link/share-token
-  // flow above has resolved) as the base history entry, so the very first
-  // pushScreen() call later has something real to go "back" to instead of
-  // the browser falling out of the app on the first back-press.
   useEffect(() => {
-    if (verifying) return;
     if (!window.history.state?.screen) {
       const initialScreen: Screen = showAuthScreen
         ? 'auth'
@@ -227,13 +158,8 @@ export default function App() {
       window.history.replaceState({ screen: initialScreen }, '', window.location.href);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verifying]);
+  }, []);
 
-  // Sync screen state from the browser's back/forward navigation. This is
-  // what makes the back button step between Landing/Auth/Upgrade/Editor
-  // instead of leaving the app -- each pushScreen() call below creates an
-  // entry, and this listener applies it when the user navigates through
-  // history rather than clicking in-app.
   useEffect(() => {
     function onPopState(e: PopStateEvent) {
       const screen: Screen = (e.state?.screen as Screen | undefined) ?? 'landing';
@@ -254,11 +180,6 @@ export default function App() {
     pushScreen('landing');
   }
 
-  // Every "Upgrade" trigger in this component funnels through here rather
-  // than calling setShowUpgradeScreen directly -- paying for Premium
-  // requires an account (Stripe/Binance checkout both need requireAuth
-  // server-side), so an anonymous visitor clicking Upgrade needs to sign
-  // in first, not land on a checkout screen that will just fail.
   function requestUpgrade() {
     if (authStatus !== 'authenticated') {
       setShowAuthScreen(true);
@@ -269,27 +190,13 @@ export default function App() {
     pushScreen('upgrade');
   }
 
-  // Everything below builds up `content` — whichever single screen is
-  // active right now — instead of returning early from each branch, so
-  // the AIChatWidget at the very end can be rendered once, wrapping
-  // whichever screen is showing, and therefore actually appear on every
-  // page as intended rather than needing to be duplicated into each one.
   let content: React.ReactNode;
 
-  if (verifying) {
-    content = <div style={{ padding: 24 }}>{t('editor.signingIn')}</div>;
-  } else if (showAuthScreen) {
-    // Uses history.back() rather than setShowAuthScreen(false) directly, so
-    // this on-screen Back button and the browser's own back button land on
-    // the same place (whatever screen pushed us here) instead of two
-    // slightly different behaviors.
+  if (showAuthScreen) {
     content = <AuthScreen onBack={() => window.history.back()} />;
   } else if (showUpgradeScreen) {
     content = <UpgradeScreen onBack={() => window.history.back()} />;
   } else if (showLanding) {
-    // Show landing screen on fresh loads (not share links) — must come
-    // before the document null-check below, since no document is loaded
-    // yet at this point (the user will pick one from the landing screen).
     content = (
       <LandingScreen
         onEnter={() => {
@@ -303,13 +210,6 @@ export default function App() {
   } else {
     const isOwner = shareSession === null;
     const isReadOnly = shareSession?.access === 'view';
-
-    // Secondary header controls -- File/Edit/Add/Help menus, the PDF
-    // Upload/Merge/Split actions, save status, and the account row. On
-    // desktop these render inline in the header, same as always. On
-    // mobile they're relocated into the hamburger drawer instead, since
-    // there isn't room to lay all of this out inline once File/Edit/Add/
-    // Help alone can already crowd a phone-width header.
     const secondaryControls = (
       <>
         {isOwner && <FileMenu />}
@@ -518,10 +418,6 @@ function saveStatusLabel(status: string): string {
   }
 }
 
-// Right-side slide-in drawer holding everything that doesn't fit in the
-// mobile header: File/Edit/Add/Help, Upload/Merge/Split, save status, and
-// the account row. Closes on backdrop tap; individual menu components
-// inside keep whatever open/close behavior they already have.
 function MobileMenuDrawer({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
@@ -566,10 +462,6 @@ function MobileMenuDrawer({ children, onClose }: { children: React.ReactNode; on
   );
 }
 
-// Groups a set of drawer controls with a divider above, and stacks them
-// vertically at full width with generous spacing for touch. Any embedded
-// component (FileMenu, HelpMenu, etc.) still opens its own dropdown/panel
-// on top of this drawer as normal.
 function DrawerSection({ children }: { children: React.ReactNode }) {
   return (
     <div

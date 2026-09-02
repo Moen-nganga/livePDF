@@ -1,26 +1,15 @@
 import express from 'express';
 import crypto from 'crypto';
 import { nanoid } from 'nanoid';
-import { usersRepo, magicLinksRepo, sessionsRepo, documentsRepo } from './db.js';
-import { sendMagicLinkEmail } from './email.js';
+import { usersRepo, sessionsRepo, documentsRepo } from './db.js';
 
 const SESSION_COOKIE = 'session';
-const MAGIC_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes -- short-lived on purpose
 
-// Sliding window: a session lasts 30 days from its *last use*, not from
-// login. Every authenticated request pushes expires_at forward another 30
-// days (see refreshSession below), so a user who visits regularly never
-// gets signed out -- only 30 days of total inactivity expires them.
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const isProd = process.env.NODE_ENV === 'production';
 
-// Admin accounts, gated by email rather than a DB column -- avoids a
-// migration for a single-admin setup. If you ever need more than a
-// handful of admins, move this to a real `is_admin` column on the users
-// table and check that instead; an allowlist that has to be redeployed
-// to change doesn't scale past a few trusted people.
 const ADMIN_EMAILS = new Set(
   (process.env.ADMIN_EMAILS ?? 'moenmburu41@gmail.com')
     .split(',')
@@ -28,10 +17,6 @@ const ADMIN_EMAILS = new Set(
     .filter(Boolean)
 );
 
-// Exported so any route that needs to know "is this user an admin" (not
-// just admin.ts's own routes) can reuse this exact same check instead of
-// re-implementing or duplicating the allowlist logic. index.ts's premium
-// feature gates rely on this to let admins through regardless of plan.
 export function isAdminEmail(email: string): boolean {
   return ADMIN_EMAILS.has(email.toLowerCase());
 }
@@ -49,13 +34,6 @@ const GOOGLE_REDIRECT_URI =
 const OAUTH_STATE_COOKIE = 'g_oauth_state';
 const OAUTH_DEVICE_COOKIE = 'g_oauth_device';
 const OAUTH_COOKIE_TTL_MS = 10 * 60 * 1000; // 10 minutes is plenty for a login redirect
-
-function simpleEmailCheck(email: unknown): email is string {
-  // Deliberately loose -- real validation happens by virtue of the email
-  // either arriving or not. This just filters out obvious garbage before
-  // we burn a Resend send on it.
-  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
 
 function setSessionCookie(res: express.Response, token: string) {
   res.cookie(SESSION_COOKIE, token, {
@@ -86,22 +64,12 @@ function clearOAuthCookies(res: express.Response) {
   res.clearCookie(OAUTH_DEVICE_COOKIE, { path: '/' });
 }
 
-// Pushes both the DB session row and the browser cookie's expiry forward
-// by another SESSION_TTL_MS. Called on every request that successfully
-// authenticates -- this is what makes the window "sliding" instead of a
-// fixed 14 days from login. Fire-and-forget from the caller's perspective
-// (awaited here, but never blocks the actual request on failure since a
-// failed refresh just means slightly earlier expiry next time, not a
-// broken request).
 async function refreshSession(res: express.Response, token: string) {
   const newExpiresAt = Date.now() + SESSION_TTL_MS;
   await sessionsRepo.refresh(token, newExpiresAt);
   setSessionCookie(res, token); // re-sends the cookie with a renewed maxAge
 }
 
-// Shared by both the magic-link /verify route and the Google OAuth
-// callback -- creates the session row + cookie and claims any anonymous
-// device documents onto the now-known user.
 async function establishSession(
   res: express.Response,
   userId: string,
@@ -121,9 +89,6 @@ async function establishSession(
   }
 }
 
-// Attaches req.userId if a valid, non-expired session cookie is present.
-// Does NOT reject the request if there isn't one -- routes that work for
-// both anonymous and logged-in users (e.g. saving a document) use this.
 export async function optionalAuth(
   req: express.Request,
   res: express.Response,
@@ -183,69 +148,7 @@ export async function requireAdmin(
 
 export const authRouter = express.Router();
 
-// Step 1: user submits their email, we mail them a one-time link.
-// Always returns the same generic response whether or not the email is
-// new -- this route shouldn't leak whether a given email has an account.
-authRouter.post('/request-link', async (req, res) => {
-  const email = req.body?.email;
-  if (!simpleEmailCheck(email)) {
-    return res.status(400).json({ error: 'Please provide a valid email address' });
-  }
-  const normalizedEmail = email.trim().toLowerCase();
-
-  const token = nanoid(32);
-  await magicLinksRepo.create({
-    token,
-    email: normalizedEmail,
-    expires_at: Date.now() + MAGIC_LINK_TTL_MS,
-    used: false,
-  });
-
-  const link = `${APP_URL}/?token=${token}`;
-
-  try {
-    await sendMagicLinkEmail(normalizedEmail, link);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Failed to send email. Please try again.' });
-  }
-
-  res.json({ ok: true });
-});
-
-// Step 2: user clicks the link, we exchange the one-time token for a
-// session cookie. Also accepts an optional deviceId so we can attach this
-// device's existing anonymous documents to the now-known user.
-authRouter.post('/verify', async (req, res) => {
-  const token = req.body?.token;
-  const deviceId = req.body?.deviceId;
-  if (typeof token !== 'string') {
-    return res.status(400).json({ error: 'Missing token' });
-  }
-
-  const magicLink = await magicLinksRepo.getByToken(token);
-  if (!magicLink || magicLink.used || magicLink.expires_at <= Date.now()) {
-    return res.status(400).json({ error: 'This link is invalid or has expired' });
-  }
-
-  await magicLinksRepo.markUsed(token);
-
-  const user = await usersRepo.findOrCreate(magicLink.email, nanoid());
-
-  await establishSession(res, user.id, typeof deviceId === 'string' ? deviceId : null);
-
-  res.json({ ok: true, user: { id: user.id, email: user.email, isAdmin: isAdminEmail(user.email) } });
-});
-
 // --- Google OAuth (Authorization Code flow) ---
-//
-// This is a full-page redirect flow, not a fetch-based one: the frontend
-// just links here (e.g. <a href="${API_BASE}/api/auth/google">), the
-// browser navigates to Google, and Google redirects back to /callback
-// below. There's no client secret or Google SDK on the frontend -- the
-// token exchange happens entirely server-to-server using our client
-// secret, so the profile data we get back is already trustworthy without
-// needing to verify an id_token signature ourselves.
 
 // Step 1: redirect the browser to Google's consent screen.
 authRouter.get('/google', (req, res) => {
@@ -318,8 +221,6 @@ authRouter.get('/google/callback', async (req, res) => {
 
     const normalizedEmail = profile.email.toLowerCase();
 
-    // Same find-or-create path the magic-link flow uses above, so a user
-    // who's used both methods with the same email ends up as one account.
     const user = await usersRepo.findOrCreate(normalizedEmail, nanoid());
 
     await establishSession(res, user.id, deviceId ?? null);

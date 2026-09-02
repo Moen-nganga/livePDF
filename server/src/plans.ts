@@ -1,9 +1,3 @@
-// Mirrors src/types/subscription.ts's PlanId/FEATURE_FLAGS on the frontend.
-// The two aren't imported from a shared package since server/ and the
-// Vite app are separate TypeScript projects here -- if you later add a
-// shared workspace package, this is the first thing worth moving into it
-// so the two definitions can't silently drift apart.
-
 export type PlanId = 'free' | 'pro_monthly' | 'pro_yearly';
 
 export const FEATURE_FLAGS: Record<PlanId, readonly string[]> = {

@@ -11,6 +11,7 @@ import { AccountMenu } from './AccountMenu';
 import { UpgradeScreen } from './UpgradeScreen';
 import { LimitReachedDialog } from './LimitReachedDialog';
 import { PremiumRequiredDialog } from './PremiumRequiredDialog';
+import { UpgradeStatusDialog } from './UpgradeStatusDialog';
 import { PrivacyPolicyScreen } from './PrivacyPolicyScreen';
 import { TermsOfServiceScreen } from './TermsOfServiceScreen';
 import { HelpCenterScreen } from './HelpCenterScreen';
@@ -20,12 +21,6 @@ interface Props {
   onEnter: () => void;
 }
 
-// Tracks whether the viewport is at or below a "mobile" breakpoint, kept in
-// sync via a matchMedia listener rather than measured once on mount --
-// covers both phones (fixed width) and desktop windows being resized/
-// rotated devices. 640px matches the point at which the fixed-column
-// recent-documents table and multi-item header row stop having room to
-// breathe.
 function useIsMobile(breakpoint = 640): boolean {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
@@ -42,13 +37,6 @@ function useIsMobile(breakpoint = 640): boolean {
   return isMobile;
 }
 
-// This screen's own internal "sub-view" -- Auth, Upgrade, one of the
-// static footer pages, or Admin -- layered on top of whatever the landing
-// page itself is showing. Tracked in history.state.landingSub (merged into
-// the same entry App.tsx already tags with `screen: 'landing'`, rather than
-// a separate top-level Screen) so the browser back button steps between
-// these sub-views instead of leaving the app, the same fix applied in
-// App.tsx for its own Auth/Upgrade toggles.
 type LandingSub = 'auth' | 'upgrade' | 'privacy' | 'terms' | 'help' | 'admin' | null;
 
 function pushLandingSub(sub: LandingSub) {
@@ -66,7 +54,6 @@ export function LandingScreen({ onEnter }: Props) {
   const authUser = useAuthStore((s) => s.user);
   const authStatus = useAuthStore((s) => s.status);
   const fetchMe = useAuthStore((s) => s.fetchMe);
-  const subscription = useSubscriptionStore((s) => s.subscription);
   const fetchSubscription = useSubscriptionStore((s) => s.fetchSubscription);
   const t = useI18nStore((s) => s.t);
   const [showAuthScreen, setShowAuthScreen] = useState(false);
@@ -75,12 +62,12 @@ export function LandingScreen({ onEnter }: Props) {
   const [showAdminScreen, setShowAdminScreen] = useState(false);
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
+  // Set once the post-checkout poll below resolves (either way) -- drives
+  // UpgradeStatusDialog instead of a blocking native alert(). null means
+  // no dialog is showing.
+  const [upgradeStatus, setUpgradeStatus] = useState<{ success: boolean } | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
 
-  // Weekly free-tier usage, fetched read-only (no save attempt) so we can
-  // gate BOTH creating new documents (already covered by WeeklyLimitError
-  // from api.saveDocument) and opening old ones (a pure GET that would
-  // otherwise sail right past the limit -- see openRecent below).
   const [usage, setUsage] = useState<UsageInfo | null>(null);
 
   type RecentSort = 'modified' | 'title';
@@ -117,23 +104,12 @@ export function LandingScreen({ onEnter }: Props) {
     return () => window.removeEventListener('mousedown', onClick);
   }, [sortMenuOpen]);
 
-  // Tag the current history entry with landingSub: null the first time this
-  // screen mounts with no sub-view open, merging into whatever App.tsx has
-  // already put on this entry (screen: 'landing') rather than overwriting
-  // it. This gives the very first pushLandingSub() call something real to
-  // return to on back, the same reasoning as App.tsx's own initial tag.
   useEffect(() => {
     if (!('landingSub' in (window.history.state ?? {}))) {
       window.history.replaceState({ ...window.history.state, landingSub: null }, '', window.location.href);
     }
   }, []);
 
-  // Sync this screen's sub-view from the browser's back/forward
-  // navigation. App.tsx has its own popstate listener reading
-  // e.state.screen; this one reads e.state.landingSub instead, so the two
-  // coexist without stepping on each other -- App's listener only cares
-  // about top-level screen (which stays 'landing' the whole time the user
-  // is inside any of these sub-views).
   useEffect(() => {
     function onPopState(e: PopStateEvent) {
       const sub = (e.state?.landingSub ?? null) as LandingSub;
@@ -146,23 +122,10 @@ export function LandingScreen({ onEnter }: Props) {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Same client-side-only caveat as elsewhere (Toolbar, AIChatWidget) --
-  // this only decides what the landing screen shows/allows. The real
-  // enforcement has to live wherever documents actually get saved.
-  const isPremium =
-    subscription?.status === 'active' &&
-    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
 
-  // Same caveat again: this only decides whether the Admin button/screen
-  // render. The server must independently verify admin status on every
-  // /api/admin/* route (and ideally on getUsage/saveDocument too, so
-  // admins bypass the weekly limit for real and not just in this UI).
+  const isPremium = useSubscriptionStore((s) => s.isPremium());
   const isAdmin = !!authUser?.isAdmin;
 
-  // Non-premium visitors see the free templates up front and the premium
-  // ones tucked behind a "More templates" toggle (still locked, so they can
-  // browse what's available before deciding to upgrade). Premium users just
-  // get everything in one grid -- there's nothing to hide from them.
   const freeTemplates = TEMPLATES.filter((tpl) => !tpl.premium);
   const extraTemplates = TEMPLATES.filter((tpl) => tpl.premium);
 
@@ -173,11 +136,6 @@ export function LandingScreen({ onEnter }: Props) {
       .finally(() => setLoadingRecent(false));
   }, []);
 
-  // Checks session + subscription + weekly usage on every load. The landing
-  // screen can be the very first thing a user sees, so this can't wait for
-  // the ?upgraded= redirect below -- someone who subscribed last week and is
-  // just opening the app normally today still needs their real plan
-  // (and usage) fetched here, not left at whatever the default state was.
   useEffect(() => {
     if (authStatus === 'idle') fetchMe();
     fetchSubscription();
@@ -185,20 +143,35 @@ export function LandingScreen({ onEnter }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stripe redirects back to APP_URL root after checkout (see success_url
-  // in stripe.ts), landing here as ?upgraded=stripe. There's no guarantee
-  // the webhook has already been processed by the time the user is
-  // redirected back, so this just triggers a refetch and lets the
-  // badge/plan label catch up whenever the subscriptions table is actually
-  // updated -- it doesn't block on it.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const upgraded = params.get('upgraded');
     const canceled = params.get('upgradeCanceled');
 
     if (upgraded) {
-      fetchSubscription();
-      alert("You're all set! Your Premium plan should be active now.");
+      (async () => {
+        // The Stripe webhook that actually grants Premium access
+        // (checkout.session.completed -> subscriptionsRepo.upsert in
+        // stripe.ts) runs asynchronously and can land a moment after
+        // Stripe redirects the browser back here. A single fetchSubscription
+        // right after redirect can race it and still see the old "free"
+        // row, showing a false "Free plan" badge and a misleading success
+        // message. Poll briefly instead of trusting the first result.
+        const POLL_ATTEMPTS = 5;
+        const POLL_DELAY_MS = 1500;
+        let becamePremium = false;
+        for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+          await fetchSubscription();
+          if (useSubscriptionStore.getState().isPremium()) {
+            becamePremium = true;
+            break;
+          }
+          if (attempt < POLL_ATTEMPTS - 1) {
+            await new Promise((resolve) => setTimeout(resolve, POLL_DELAY_MS));
+          }
+        }
+        setUpgradeStatus({ success: becamePremium });
+      })();
     } else if (canceled) {
       // No message needed -- the user just clicked "back" from checkout.
     }
@@ -212,10 +185,6 @@ export function LandingScreen({ onEnter }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Same reasoning as App.tsx's identical helper: paying for Premium
-  // requires an account, so an anonymous visitor (e.g. one who just hit
-  // the weekly document limit without ever signing in) needs to sign in
-  // first rather than landing on a checkout screen that will just fail.
   function requestUpgrade() {
     if (authStatus !== 'authenticated') {
       setShowAuthScreen(true);
@@ -239,7 +208,7 @@ export function LandingScreen({ onEnter }: Props) {
 
   async function openTemplate(template: TemplateDefinition) {
     if (creating) return;
-    if (template.premium && !isPremium && !isAdmin) {
+    if (template.premium && !isPremium) {
       setPremiumTemplate(template);
       return;
     }
@@ -279,12 +248,6 @@ export function LandingScreen({ onEnter }: Props) {
   }
 
   async function openRecent(summary: DocumentSummary) {
-    // Opening an OLD document is a pure read (api.getDocument), so it never
-    // naturally hits the server's weekly_limit_reached check the way
-    // creating a new one does. Gate it here using the read-only usage
-    // snapshot fetched on mount, so free users who've hit their weekly cap
-    // can't keep working just by reopening old files instead of new ones.
-    // Admins skip this UI gate entirely (see isAdmin note above).
     if (usage?.limitReached && !isAdmin) {
       setLimitReachedMessage(
         `Free plan is limited to ${usage.limit} PDFs per week. Upgrade to Premium for unlimited.`
@@ -302,10 +265,6 @@ export function LandingScreen({ onEnter }: Props) {
   }
 
   if (showAuthScreen) {
-    // Uses history.back() rather than setShowAuthScreen(false) directly, so
-    // this on-screen Back button and the browser's own back button land on
-    // the same place -- popstate above then flips showAuthScreen off in
-    // sync with whatever entry we land back on.
     return <AuthScreen onBack={() => window.history.back()} />;
   }
 
@@ -490,7 +449,7 @@ export function LandingScreen({ onEnter }: Props) {
                 key={template.id}
                 template={template}
                 loading={creating === template.id}
-                locked={!!template.premium && !isPremium && !isAdmin}
+                locked={!!template.premium && !isPremium}
                 onClick={() => openTemplate(template)}
               />
             ))}
@@ -548,7 +507,7 @@ export function LandingScreen({ onEnter }: Props) {
                   key={template.id}
                   template={template}
                   loading={creating === template.id}
-                  locked={!isPremium && !isAdmin}
+                  locked={!isPremium}
                   onClick={() => openTemplate(template)}
                 />
               ))}
@@ -836,6 +795,12 @@ export function LandingScreen({ onEnter }: Props) {
           }}
         />
       )}
+      {upgradeStatus && (
+        <UpgradeStatusDialog
+          success={upgradeStatus.success}
+          onClose={() => setUpgradeStatus(null)}
+        />
+      )}
     </div>
   );
 }
@@ -864,19 +829,21 @@ function TemplateCard({
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'stretch',
+        minWidth: 0,
         padding: 0,
         border: hovered ? '2px solid var(--color-accent)' : '2px solid var(--color-border)',
         borderRadius: 10,
         background: 'var(--color-surface)',
         cursor: loading ? 'default' : 'pointer',
-        overflow: 'hidden',
         transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
         boxShadow: hovered ? 'var(--shadow-md)' : 'var(--shadow-sm)',
         textAlign: 'left',
         position: 'relative',
       }}
     >
-      {/* Thumbnail */}
+      {/* Thumbnail -- clipped to the card's rounded top corners here,
+          rather than on the outer button, so this is the only part of the
+          card that can ever be clipped. */}
       <div style={{
         height: 108,
         background: template.color,
@@ -886,6 +853,8 @@ function TemplateCard({
         fontSize: 40,
         position: 'relative',
         overflow: 'hidden',
+        borderRadius: '8px 8px 0 0',
+        flexShrink: 0,
       }}>
         <TemplateThumbnail id={template.id} />
         {locked && (
@@ -928,12 +897,13 @@ function TemplateCard({
           </div>
         )}
       </div>
-      {/* Label */}
+      {/* Label -- no fixed height and no overflow clipping, so the
+          description always wraps in full instead of being cut off. */}
       <div style={{ padding: '10px 12px 12px' }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text)', lineHeight: 1.3 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text)', lineHeight: 1.3, overflowWrap: 'break-word' }}>
           {template.label}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 3, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 3, lineHeight: 1.4, overflowWrap: 'break-word' }}>
           {template.description}
         </div>
       </div>

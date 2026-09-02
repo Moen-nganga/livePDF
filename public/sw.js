@@ -1,7 +1,3 @@
-// Minimal offline support: cache the app shell so the page itself loads
-// without a connection. Document data is handled separately via IndexedDB
-// (see lib/offlineCache.ts) since it changes far more often than app code.
-
 const CACHE_NAME = 'pdf-editor-shell-v1';
 const SHELL_URLS = ['/', '/index.html'];
 
@@ -22,9 +18,6 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
-  // Only handle same-origin GET requests for the app shell / static assets.
-  // API calls (different origin/port) and POST/PUT/DELETE pass through
-  // untouched, since those must hit the network or fail explicitly.
   if (request.method !== 'GET') return;
 
   event.respondWith(

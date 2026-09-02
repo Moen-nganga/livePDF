@@ -2,9 +2,6 @@ import type { Page, TextObject, RectObject } from '../types/document';
 import { nanoid } from 'nanoid';
 import { PAGE_SIZES } from '../types/document';
 
-// Each template returns a ready-made array of pages with pre-positioned
-// objects. Page size is A4 (595.28 x 841.89 pts) throughout.
-
 const W = PAGE_SIZES.A4.width;   // 595.28
 const H = PAGE_SIZES.A4.height;  // 841.89
 
@@ -741,7 +738,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'report',
     label: 'Report cover page',
-    description: 'Polished cover for reports',
+    description: 'Cover for reports',
     color: '#e8f0fe',
     icon: '📊',
     buildPages: () => [reportCoverPage()],
@@ -749,7 +746,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'certificate',
     label: 'Certificate',
-    description: 'Achievement certificates',
+    description: 'Template Certificate',
     color: '#fef7e0',
     icon: '🏆',
     buildPages: () => [certificatePage()],
@@ -757,7 +754,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'todo',
     label: 'To do list',
-    description: 'Track tasks and priorities',
+    description: 'Tasks and priorities',
     color: '#fbe4da',
     icon: '✅',
     buildPages: () => [toDoListPage()],
@@ -766,7 +763,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'project-tracking',
     label: 'Project tracking',
-    description: 'Status board for projects',
+    description: 'Board for projects',
     color: '#daece9',
     icon: '📁',
     buildPages: () => [projectTrackingPage()],
@@ -783,8 +780,8 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'shift-schedule',
-    label: 'Employee shift schedule',
-    description: 'Weekly shifts by employee',
+    label: 'Employee shifts',
+    description: 'Shifts by employee',
     color: '#dcefdd',
     icon: '🕒',
     buildPages: () => [shiftSchedulePage()],
@@ -802,7 +799,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'gradebook',
     label: 'Grade book',
-    description: 'Student grades by assignment',
+    description: 'Grades by assignment',
     color: '#fde3c2',
     icon: '🎓',
     buildPages: () => [gradeBookPage()],
@@ -811,7 +808,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'expense-report',
     label: 'Expense Report',
-    description: 'Itemised expenses and totals',
+    description: 'Expenses and totals',
     color: '#dee1f2',
     icon: '💰',
     buildPages: () => [expenseReportPage()],
@@ -829,7 +826,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'annual-budget',
     label: 'Annual Budget',
-    description: 'Quarterly budget by category',
+    description: 'Budget by category',
     color: '#fdecc0',
     icon: '💵',
     buildPages: () => [annualBudgetPage()],
@@ -838,7 +835,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'team-roster',
     label: 'Team Roster',
-    description: 'Contact list for your team',
+    description: 'Contact list',
     color: '#d3e6fb',
     icon: '👥',
     buildPages: () => [teamRosterPage()],
@@ -847,15 +844,15 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'time-shifts',
     label: 'Time shifts',
-    description: 'Weekly clock in/out sheet',
+    description: 'Clock in/out sheet',
     color: '#e3ddf3',
     icon: '⏱️',
     buildPages: () => [timeShiftsPage()],
     premium: true,
   },
   {
-    id: 'analytics-dashboard',
-    label: 'Analytics dashboard',
+    id: 'analytics-page',
+    label: 'Analytics Page',
     description: 'KPI cards and charts',
     color: '#dcedee',
     icon: '📈',

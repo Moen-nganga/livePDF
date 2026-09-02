@@ -13,18 +13,8 @@ export const LOCALES: { code: Locale; label: string }[] = [
   { code: 'ar', label: 'العربية' },
 ];
 
-// Locales that read right-to-left. Consumers (e.g. a top-level layout
-// component) can check `RTL_LOCALES.has(locale)` to set `dir="rtl"` on
-// <html> or a wrapping container -- the translations object itself has no
-// opinion on layout direction, just strings.
 export const RTL_LOCALES: Set<Locale> = new Set(['ar']);
 
-// Flat, dot-namespaced keys rather than nested objects -- keeps t('a.b.c')
-// lookups a single object index instead of a walk, and makes it obvious
-// at a glance which screen a string belongs to. Covers Landing, Auth,
-// editor header, Account menu, Toolbar, Add/File/Edit/View/Help menus.
-// Anything else in the app still reads as plain English until it gets its
-// own translation pass.
 export const translations: Record<Locale, Record<string, string>> = {
   en: {
     // Common

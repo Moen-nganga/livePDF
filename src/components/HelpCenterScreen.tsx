@@ -20,7 +20,7 @@ const FAQ_GROUPS: FaqGroup[] = [
       },
       {
         q: 'Do I need an account?',
-        a: "You can create and edit documents without signing in. Signing in (via a one-time email link) or through your Google account lets your documents sync and lets you subscribe to Premium.",
+        a: "You can create and edit documents without signing in. Signing in through your Google account lets your documents sync and lets you subscribe to Premium.",
       },
     ],
   },

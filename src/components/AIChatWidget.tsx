@@ -17,13 +17,6 @@ export function AIChatWidget({ isPremium, documentContext, onRequirePremium }: P
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Keeps the floating button clear of the page footer (present on the
-  // landing screen, id="app-footer") -- without this it sits fixed to the
-  // viewport bottom and ends up hovering on top of the footer's text once
-  // the person scrolls all the way down. Recomputed on scroll/resize
-  // rather than once on mount since the footer only exists on some screens
-  // and its position shifts as the page scrolls.
   const BASE_OFFSET = 20;
   const [bottomOffset, setBottomOffset] = useState(BASE_OFFSET);
 
@@ -73,9 +66,6 @@ export function AIChatWidget({ isPremium, documentContext, onRequirePremium }: P
       setMessages((m) => [...m, { role: 'model', text: reply }]);
     } catch (err) {
       if (err instanceof Error && err.message === 'upgrade_required') {
-        // Subscription could have lapsed between opening the widget and
-        // sending a message -- the server is the real source of truth, so
-        // defer to it even if the client thought isPremium was true.
         setOpen(false);
         setPremiumPromptOpen(true);
       } else {

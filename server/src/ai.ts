@@ -1,12 +1,6 @@
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? '';
-// Using the "latest" alias rather than a pinned version (e.g.
-// gemini-2.5-flash) on purpose -- Google deprecates specific model
-// versions fairly often, and a pinned name eventually 404s for new API
-// keys once it's phased out. This alias always points at whichever Flash
-// model Google currently recommends, so it keeps working without needing
-// a code change every time they ship a new one.
-const MODEL = 'gemini-flash-latest';
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const GROQ_API_KEY = process.env.GROQ_API_KEY ?? '';
+const MODEL = 'openai/gpt-oss-120b';
+const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 export interface ChatMessage {
   role: 'user' | 'model';
@@ -15,28 +9,72 @@ export interface ChatMessage {
 
 const SYSTEM_INSTRUCTION = `You are a helpful assistant embedded inside a PDF editor web app, shown as a small chat widget. Users ask you things like how to use a feature, or questions about the document they're currently editing. Keep answers concise and practical. If document content is provided below, use it to answer questions about what's actually in the document -- otherwise just help generally with using the editor.`;
 
-// Caps to keep individual requests reasonable -- this proxies straight
-// through to Gemini's free tier, which is rate-limited per day, so a
-// single runaway conversation (or someone pasting a huge document)
-// shouldn't be able to burn through the whole daily quota by itself.
 const MAX_MESSAGES = 20;
 const MAX_DOCUMENT_CONTEXT_CHARS = 8000;
 const MAX_MESSAGE_CHARS = 2000;
 
-interface GeminiResponse {
-  candidates?: {
-    content?: {
-      parts?: { text?: string }[];
+// Retry config for transient failures (rate limits, overloaded model, network blips)
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 500;
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
+
+// Groq uses the OpenAI chat-completions shape: role is 'user' | 'assistant' | 'system',
+// not the 'model' role Gemini used. We translate at the boundary so the rest of the
+// app (ChatMessage, the widget, index.ts) doesn't need to know or care.
+type GroqRole = 'system' | 'user' | 'assistant';
+
+interface GroqChatCompletionResponse {
+  choices?: {
+    message?: {
+      content?: string;
     };
   }[];
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A user-facing error. Thrown once retries are exhausted (or for
+// non-retryable failures) so index.ts can show something better than
+// a generic 500.
+export class ChatServiceError extends Error {
+  constructor(message: string, public readonly retryable: boolean) {
+    super(message);
+    this.name = 'ChatServiceError';
+  }
+}
+
+function toGroqRole(role: ChatMessage['role']): GroqRole {
+  return role === 'model' ? 'assistant' : 'user';
+}
+
+async function callGroq(systemText: string, trimmedMessages: ChatMessage[]): Promise<Response> {
+  return fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: systemText },
+        ...trimmedMessages.map((m) => ({
+          role: toGroqRole(m.role),
+          content: m.text,
+        })),
+      ],
+    }),
+  });
 }
 
 export async function getChatReply(
   messages: ChatMessage[],
   documentContext: string | undefined
 ): Promise<string> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set on the server');
+  if (!GROQ_API_KEY) {
+    throw new ChatServiceError('GROQ_API_KEY is not set on the server', false);
   }
 
   const trimmedMessages = messages
@@ -47,27 +85,53 @@ export async function getChatReply(
     ? `${SYSTEM_INSTRUCTION}\n\nCurrent document content:\n${documentContext.slice(0, MAX_DOCUMENT_CONTEXT_CHARS)}`
     : SYSTEM_INSTRUCTION;
 
-  const res = await fetch(`${API_URL}?key=${GEMINI_API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemText }] },
-      contents: trimmedMessages.map((m) => ({
-        role: m.role,
-        parts: [{ text: m.text }],
-      })),
-    }),
-  });
+  let lastError: unknown;
 
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '');
-    throw new Error(`Gemini API error (${res.status}): ${errBody.slice(0, 300)}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await callGroq(systemText, trimmedMessages);
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        const retryable = RETRYABLE_STATUS_CODES.has(res.status);
+
+        if (retryable && attempt < MAX_RETRIES) {
+          const delay = BASE_DELAY_MS * 2 ** attempt; // 500ms, 1s, 2s
+          console.warn(
+            `Groq API ${res.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+          );
+          await sleep(delay);
+          continue;
+        }
+
+        throw new ChatServiceError(
+          `Groq API error (${res.status}): ${errBody.slice(0, 300)}`,
+          retryable
+        );
+      }
+
+      const data = (await res.json()) as GroqChatCompletionResponse;
+      const reply = data?.choices?.[0]?.message?.content;
+      if (typeof reply !== 'string') {
+        throw new ChatServiceError('Groq API returned an unexpected response shape', false);
+      }
+      return reply;
+    } catch (err) {
+      lastError = err;
+      // Network-level failures (fetch throwing) are also worth retrying
+      if (!(err instanceof ChatServiceError) && attempt < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * 2 ** attempt;
+        console.warn(`Groq request failed, retrying in ${delay}ms:`, err);
+        await sleep(delay);
+        continue;
+      }
+      break;
+    }
   }
 
-  const data = (await res.json()) as GeminiResponse;
-  const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (typeof reply !== 'string') {
-    throw new Error('Gemini API returned an unexpected response shape');
-  }
-  return reply;
+  if (lastError instanceof ChatServiceError) throw lastError;
+  throw new ChatServiceError(
+    lastError instanceof Error ? lastError.message : 'Failed to reach the AI service',
+    true
+  );
 }

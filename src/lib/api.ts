@@ -1,9 +1,5 @@
 import type { PDFDocument } from '../types/document';
 import { getDeviceId } from './deviceId';
-
-// Exported so other modules (e.g. AuthScreen's "Continue with Google" link)
-// can build absolute URLs to the API's own routes -- needed for the OAuth
-// redirect flow, which navigates the whole page rather than fetching.
 export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8787';
 
 function headers() {
@@ -29,10 +25,6 @@ export interface ShareInfo {
 export interface AuthUser {
   id: string;
   email: string;
-  // Server-asserted flag -- NOT something the client can grant itself.
-  // The backend's /api/auth/me (and every other route that checks it,
-  // e.g. usage limits and /api/admin/*) must read this from the user's
-  // row in the DB, never trust it if sent from the client on a request.
   isAdmin?: boolean;
 }
 
@@ -44,32 +36,15 @@ export interface SubscriptionInfo {
   provider?: string | null;
   currentPeriodEnd?: string | null;
   cancelAtPeriodEnd?: boolean;
-  // Server-asserted flag mirroring AuthUser.isAdmin -- set by index.ts's
-  // /api/subscription from the same ADMIN_EMAILS check auth.ts uses
-  // elsewhere. Admins should be treated as premium in the UI even when
-  // planId/status say "free", since there's no real subscription behind
-  // an admin's access.
   isAdmin?: boolean;
 }
 
-// Reflects the free-tier weekly document limit WITHOUT attempting a save --
-// fetched by LandingScreen so opening an old document (a pure read) can be
-// gated the same way creating a new one already is via WeeklyLimitError,
-// instead of only discovering the limit on the next autosave tick.
-// `limit` is null for premium accounts (unlimited) -- and, once the server
-// is updated, should also be null for admin accounts.
 export interface UsageInfo {
   used: number;
   limit: number | null;
   limitReached: boolean;
 }
 
-// Thrown specifically when the server rejects a save because of the
-// free-tier weekly document limit -- callers that create new documents
-// (LandingScreen's template/blank flow, uploads) check for this via
-// `instanceof` to show an upgrade prompt instead of a generic save-failed
-// message, since retrying won't help and the autosave hook shouldn't just
-// silently keep failing on every subsequent edit either.
 export class WeeklyLimitError extends Error {
   limit: number;
   constructor(message: string, limit: number) {
@@ -92,11 +67,6 @@ export interface ChatMessage {
   text: string;
 }
 
-// Site-wide analytics for the admin dashboard. Backend should compute these
-// from the users/subscriptions tables -- this endpoint must itself be
-// protected server-side (401/403 for any non-admin caller), since this is
-// exactly the kind of data that must never depend solely on the client
-// choosing whether to render the Admin button.
 export interface AdminAnalytics {
   totalUsers: number;
   loggedInLast24h: number;

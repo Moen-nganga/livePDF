@@ -6,8 +6,6 @@ interface AuthState {
   status: 'idle' | 'loading' | 'authenticated' | 'unauthenticated';
 
   fetchMe: () => Promise<void>;
-  requestMagicLink: (email: string) => Promise<{ ok: boolean; error?: string }>;
-  verifyToken: (token: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => Promise<void>;
 }
 
@@ -22,25 +20,6 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ status: 'loading' });
     const user = await api.getMe();
     set({ user, status: user ? 'authenticated' : 'unauthenticated' });
-  },
-
-  requestMagicLink: async (email: string) => {
-    try {
-      await api.requestMagicLink(email);
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
-    }
-  },
-
-  verifyToken: async (token: string) => {
-    try {
-      const user = await api.verifyMagicLink(token);
-      set({ user, status: 'authenticated' });
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'This link is invalid or has expired' };
-    }
   },
 
   logout: async () => {

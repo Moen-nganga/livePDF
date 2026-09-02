@@ -7,7 +7,7 @@ import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
 import { authRouter, requireAuth, optionalAuth, isAdminEmail } from './auth.js';
 import { adminRouter } from './admin.js';
 import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
-import { getChatReply, type ChatMessage } from './ai.js';
+import { getChatReply, ChatServiceError, type ChatMessage } from './ai.js';
 import { usersRepo } from './db.js';
 import type { PlanId } from './plans.js';
 
@@ -20,13 +20,6 @@ app.use(
   })
 );
 app.use(cookieParser());
-
-// --- Webhook routes: MUST be registered before express.json() below. ---
-// Stripe's signature verification is computed over the *raw* request body
-// bytes -- if the global JSON parser runs first, the body has already
-// been parsed/re-serialized and the signature check will fail (harmlessly,
-// but permanently). express.raw() here captures the untouched bytes for
-// just this route.
 
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   const signature = req.header('stripe-signature');
@@ -60,10 +53,6 @@ app.use(express.json({ limit: '25mb' })); // generous: documents embed base64 im
 app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 
-// Attaches req.userId when a valid session cookie is present, without
-// requiring one -- needed here (not just on /api/auth/me) so the document
-// routes below can tell "signed-in free user" from "anonymous device" when
-// enforcing the weekly creation limit.
 app.use(optionalAuth);
 
 function requireDeviceId(req: express.Request, res: express.Response): string | null {
@@ -75,12 +64,6 @@ function requireDeviceId(req: express.Request, res: express.Response): string | 
   return deviceId;
 }
 
-// Admins get every feature everything a premium subscriber gets, with no
-// Stripe subscription required. Reuses auth.ts's isAdminEmail (the same
-// allowlist requireAdmin checks) instead of a second, possibly-divergent
-// definition of "admin". This is a real DB lookup, not trusting anything
-// the client claims, so it can't be spoofed the way a client-side isAdmin
-// flag could.
 async function isAdminUser(userId: string | undefined): Promise<boolean> {
   if (!userId) return false;
   const user = await usersRepo.getById(userId);
@@ -110,12 +93,6 @@ app.get('/api/documents/:id', async (req, res) => {
 const WEEKLY_FREE_DOCUMENT_LIMIT = 10;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Read-only check so the client can know whether the weekly limit has been
-// hit WITHOUT attempting a save -- needed so opening an old document (a
-// pure read) can be gated the same way creating a new one already is,
-// instead of only discovering the limit on the next autosave tick. Mirrors
-// the exact same countCreatedSince + premium/admin check the PUT handler
-// below uses, so the two can never disagree.
 app.get('/api/usage', async (req, res) => {
   const deviceId = requireDeviceId(req, res);
   if (!deviceId) return;
@@ -150,11 +127,6 @@ app.put('/api/documents/:id', async (req, res) => {
   }
 
   const userId = (req as any).userId as string | undefined;
-
-  // Only a genuinely NEW document counts against the weekly limit -- an
-  // existing document being autosaved again (the common case, since this
-  // same route fires on every edit) must never be blocked, or editing
-  // would break entirely once someone hit the limit.
   const existing = await documentsRepo.getById(req.params.id);
   if (!existing) {
     const sub = userId ? await subscriptionsRepo.getByUserId(userId) : undefined;
@@ -316,11 +288,6 @@ app.post('/api/checkout/stripe', requireAuth, async (req, res) => {
 });
 
 // --- AI chat widget ---
-// Gated server-side, unlike the client-only checks on things like
-// Signatures -- every call here costs a real request against Gemini's
-// free-tier daily quota, so this one needs actual enforcement, not just a
-// hidden UI element a determined user could bypass. Admins bypass the
-// premium requirement the same way they bypass the doc limit above.
 app.post('/api/chat', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
   const sub = await subscriptionsRepo.getByUserId(userId);
@@ -341,6 +308,12 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     res.json({ reply });
   } catch (err) {
     console.error(err);
+    if (err instanceof ChatServiceError && err.retryable) {
+      return res.status(503).json({
+        error: 'ai_temporarily_unavailable',
+        message: 'The assistant is busy right now. Please try again in a moment.',
+      });
+    }
     res.status(500).json({ error: 'Failed to get a response from the assistant. Please try again.' });
   }
 });

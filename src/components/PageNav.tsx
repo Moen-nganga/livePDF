@@ -17,11 +17,6 @@ interface PageNavProps {
   onRequirePremium?: () => void;
 }
 
-// Tracks whether the viewport is at or below a "mobile" breakpoint, kept in
-// sync via a matchMedia listener (covers resize/rotation, not just the
-// size at mount). Same 640px threshold and pattern used elsewhere
-// (LandingScreen) -- duplicated locally rather than shared since there's
-// no existing utils module to put it in yet.
 function useIsMobile(breakpoint = 640): boolean {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
@@ -38,9 +33,6 @@ function useIsMobile(breakpoint = 640): boolean {
   return isMobile;
 }
 
-// Fixed height of the mobile bottom tab strip -- exported so App.tsx can
-// reserve matching space (paddingBottom) in the canvas area instead of the
-// fixed-position bar overlapping page content.
 export const PAGE_NAV_MOBILE_BAR_HEIGHT = 48;
 
 export function PageNav({ onRequirePremium }: PageNavProps) {
@@ -53,30 +45,12 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
   const renamePage = useEditorStore((s) => s.renamePage);
   const isCollapsed = useEditorStore((s) => s.isPageNavCollapsed);
   const setIsCollapsed = useEditorStore((s) => s.setIsPageNavCollapsed);
-
   const isMobile = useIsMobile();
-
-  const subscription = useSubscriptionStore((s) => s.subscription);
-  // Client-side gate only, same caveat as Toolbar's signature gating and
-  // App.tsx's AI chat gating -- there's no server resource being consumed
-  // by adding a page in this check itself (unlike the weekly
-  // document-creation limit, which is enforced server-side too). Worth
-  // revisiting with a server-side check if this ever needs to be airtight.
-  const isPremium =
-    subscription?.status === 'active' &&
-    (subscription.planId === 'pro_monthly' || subscription.planId === 'pro_yearly');
-
+  const isPremium = useSubscriptionStore((s) => s.isPremium());
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [premiumPromptOpen, setPremiumPromptOpen] = useState(false);
-
-  // Mobile-only: which page's action sheet (Rename/Duplicate/Delete) is
-  // open, and whether the rename dialog is showing. Kept separate from the
-  // desktop `menu`/`renamingId` state above because the mobile bottom-sheet
-  // presentation is different enough (full-width sheet vs. anchored
-  // context menu, modal rename vs. inline input) that reusing the same
-  // state would tangle two different UIs together.
   const [mobileActionSheetPageId, setMobileActionSheetPageId] = useState<string | null>(null);
   const [mobileRenamePageId, setMobileRenamePageId] = useState<string | null>(null);
   const [mobileRenameValue, setMobileRenameValue] = useState('');
@@ -162,11 +136,6 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
     setMobileRenamePageId(null);
   }
 
-  // ---- Mobile: horizontal bottom tab strip, Google Sheets style ----
-  // Tapping a tab that's already active opens the action sheet (rename /
-  // duplicate / delete) rather than dedicating separate on-screen space to
-  // a per-tab menu button, which wouldn't fit at this bar's height once
-  // there are more than a couple of pages.
   if (isMobile) {
     return (
       <>
@@ -278,13 +247,6 @@ export function PageNav({ onRequirePremium }: PageNavProps) {
     );
   }
 
-  // ---- Desktop: unchanged side column ----
-
-  // Collapsed to a thin strip -- left available on desktop via a toggle for
-  // anyone who wants the extra canvas width. Nothing about page state is
-  // lost while collapsed; this is purely a view toggle (isPageNavCollapsed
-  // already lives in the store as transient view state, same category as
-  // showRuler/showComments).
   if (isCollapsed) {
     return (
       <button
@@ -449,9 +411,6 @@ interface ContextMenuProps {
 }
 
 function ContextMenu({ x, y, onDuplicate, onRename, onDelete }: ContextMenuProps) {
-  // Fixed positioning at the raw click coordinates — this menu intentionally
-  // renders outside the sidebar's own scroll/flow so it isn't clipped by
-  // the sidebar's overflow:auto.
   return (
     <div
       onClick={(e) => e.stopPropagation()} // don't let the global "close on click" handler eat menu item clicks
@@ -586,9 +545,6 @@ function SheetItem({
   );
 }
 
-// Centered modal for renaming a page on mobile -- a full input dialog reads
-// better on a small screen than trying to swap a tab in the scrolling
-// bottom strip into an inline edit field.
 function MobileRenameDialog({
   value,
   onChange,
