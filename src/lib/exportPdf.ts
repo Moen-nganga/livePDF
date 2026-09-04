@@ -11,14 +11,7 @@ import {
 import type { PDFFont, PDFPage } from 'pdf-lib';
 import type { PDFDocument, PageObject } from '../types/document';
 
-/**
- * Maps our on-screen web-safe font names to the closest pdf-lib
- * StandardFonts equivalent. pdf-lib can only embed its own built-in set
- * (Helvetica, Times-Roman, Courier, and their bold/italic variants) without
- * fetching and embedding real font files, which we're deliberately not
- * doing — see fonts.ts for why. Fonts without an exact match fall back to
- * the closest visual analog (e.g. all sans-serif fonts -> Helvetica).
- */
+
 const FONT_BASE_MAP: Record<string, 'Helvetica' | 'TimesRoman' | 'Courier'> = {
   Arial: 'Helvetica',
   Helvetica: 'Helvetica',
@@ -42,6 +35,11 @@ interface FontSet {
   CourierBold: PDFFont;
 }
 
+// Standard hyperlink blue, used for any text object with a link — regardless
+// of the color the person picked for it — so links are recognizable at a
+// glance, the same way they are in Word/Docs/most PDF viewers.
+const LINK_COLOR = '#1155CC';
+
 function pickFont(fonts: FontSet, fontFamily: string, bold: boolean): PDFFont {
   const base = FONT_BASE_MAP[fontFamily] ?? 'Helvetica';
   if (base === 'TimesRoman') return bold ? fonts.TimesRomanBold : fonts.TimesRoman;
@@ -50,12 +48,45 @@ function pickFont(fonts: FontSet, fontFamily: string, bold: boolean): PDFFont {
 }
 
 /**
- * Builds the actual PDF bytes from our document model. Shared by both
- * exportToPdf (download/save-as) and printPdf (open the browser's print
- * dialog) so the page/object drawing logic exists in exactly one place —
- * printing is not a separate rendering path, just a different thing done
- * with the same bytes afterward.
+ * Break `text` into lines that each fit within `maxWidth` at the given
+ * font/size, the way the on-screen fabric.Textbox wraps. Respects
+ * explicit newlines in the source text as paragraph breaks.
+ *
+ * pdf-lib's `drawText` has no built-in wrapping (it just draws one
+ * literal line), which is what let long text run past the box edge in
+ * the exported PDF even though the editor showed it wrapped correctly.
  */
+function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
+  const paragraphs = text.split('\n');
+  const lines: string[] = [];
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.length === 0) {
+      lines.push('');
+      continue;
+    }
+
+    const words = paragraph.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+      const candidate = currentLine ? `${currentLine} ${word}` : word;
+      const candidateWidth = font.widthOfTextAtSize(candidate, fontSize);
+
+      if (candidateWidth > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = candidate;
+      }
+    }
+
+    lines.push(currentLine);
+  }
+
+  return lines;
+}
+
 async function buildPdf(doc: PDFDocument): Promise<Uint8Array> {
   const pdf = await PdfLibDocument.create();
   const fonts: FontSet = {
@@ -83,31 +114,12 @@ async function buildPdf(doc: PDFDocument): Promise<Uint8Array> {
   return pdf.save();
 }
 
-/**
- * Builds a real PDF from our document model and saves it, letting the
- * user choose the filename (and, on supported browsers, the destination
- * folder too via the native Save dialog).
- */
 export async function exportToPdf(doc: PDFDocument, filename: string): Promise<void> {
   const bytes = await buildPdf(doc);
   const safeName = filename.trim().replace(/\.pdf$/i, '') || 'document';
   await saveBytes(bytes, `${safeName}.pdf`);
 }
 
-/**
- * Builds the same PDF and opens the browser's native print dialog for it,
- * without prompting for a filename first (printing isn't saving a file).
- *
- * Implementation: loads the PDF into a hidden <iframe> (using the
- * browser's own built-in PDF viewer) and calls print() on that iframe's
- * window. This is more reliable than window.open(url) + print() on the
- * new window — many browsers block or don't expose print() across that
- * boundary, and popup blockers can kill the new tab outright. If the
- * iframe approach is blocked for some reason (e.g. a browser that
- * sandboxes scripting into a PDF-rendered iframe), it falls back to
- * simply opening the PDF in a new tab, where the browser's own viewer
- * still provides a print button even though we can't trigger it directly.
- */
 export async function printPdf(doc: PDFDocument): Promise<void> {
   const bytes = await buildPdf(doc);
   const plainBytes = new Uint8Array(bytes); // see saveBytes below for why this copy is needed
@@ -162,23 +174,10 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-/**
- * Our editor uses a top-left origin (y grows downward, matches screen/CSS
- * convention, and Fabric.js's own coordinate system). PDF uses a bottom-left
- * origin (y grows upward). Every draw call must flip y using the page height.
- */
 function flipY(y: number, height: number, pageHeight: number): number {
   return pageHeight - y - height;
 }
 
-/**
- * Adds a clickable link annotation over a rectangular region of a page.
- * pdf-lib has no high-level "add a link" API, so this builds the PDF
- * annotation dictionary directly: a Link annotation with an invisible
- * border (Border: [0,0,0]) and a URI action pointing at the target.
- * The rectangle uses the same flipped (bottom-left-origin) coordinates
- * as everything else drawn on the page.
- */
 function addLinkAnnotation(
   pdfPage: PDFPage,
   url: string,
@@ -219,30 +218,73 @@ async function drawObject(
   switch (obj.type) {
     case 'text': {
       const font = pickFont(fonts, obj.fontFamily, obj.bold);
-      const textY = flipY(obj.y, obj.fontSize, pageHeight) - (obj.height - obj.fontSize); // align to top of box
-      pdfPage.drawText(obj.text, {
-        x: obj.x,
-        y: textY,
-        size: obj.fontSize,
-        font,
-        color: hexToRgb(obj.color),
-        opacity: obj.opacity,
-        rotate,
-      });
 
-      if (obj.strikethrough) {
-        // pdf-lib has no built-in strikethrough — draw a line manually
-        // at roughly the text's visual midline (~30% up from the
-        // baseline works well across typical font metrics).
-        const textWidth = font.widthOfTextAtSize(obj.text, obj.fontSize);
-        const lineY = textY + obj.fontSize * 0.3;
-        pdfPage.drawLine({
-          start: { x: obj.x, y: lineY },
-          end: { x: obj.x + textWidth, y: lineY },
-          thickness: Math.max(1, obj.fontSize * 0.06),
-          color: hexToRgb(obj.color),
+      // 1.16 matches fabric.js's default lineHeight factor, so wrapped
+      // lines land at roughly the same vertical spacing as the editor.
+      const lineHeight = obj.fontSize * 1.16;
+      const lines = wrapText(obj.text, font, obj.fontSize, obj.width);
+
+      // Baseline of the first line, measured down from the top of the
+      // box. fontSize * 0.8 approximates the font's ascent so glyph caps
+      // land near the top edge, similar to how the canvas renders it.
+      const boxTop = pageHeight - obj.y;
+      let lineY = boxTop - obj.fontSize * 0.8;
+
+      // Linked text always renders in the standard hyperlink blue rather
+      // than the object's own color — the color property itself is left
+      // untouched so it's still there if the link is ever removed.
+      const textColor = hexToRgb(obj.link ? LINK_COLOR : obj.color);
+
+      for (const line of lines) {
+        const lineWidth = font.widthOfTextAtSize(line, obj.fontSize);
+        let lineX = obj.x;
+        if (obj.align === 'center') {
+          lineX = obj.x + (obj.width - lineWidth) / 2;
+        } else if (obj.align === 'right') {
+          lineX = obj.x + (obj.width - lineWidth);
+        }
+
+        pdfPage.drawText(line, {
+          x: lineX,
+          y: lineY,
+          size: obj.fontSize,
+          font,
+          color: textColor,
           opacity: obj.opacity,
+          rotate,
         });
+
+        if (obj.strikethrough && line.length > 0) {
+          // pdf-lib has no built-in strikethrough — draw a line manually
+          // at roughly the text's visual midline (~30% up from the
+          // baseline works well across typical font metrics).
+          const strikeY = lineY + obj.fontSize * 0.3;
+          pdfPage.drawLine({
+            start: { x: lineX, y: strikeY },
+            end: { x: lineX + lineWidth, y: strikeY },
+            thickness: Math.max(1, obj.fontSize * 0.06),
+            color: textColor,
+            opacity: obj.opacity,
+          });
+        }
+
+        if (obj.link && line.length > 0) {
+          // pdf-lib has no built-in underline either. Without this, a
+          // link annotation is still clickable but looks exactly like
+          // plain text on the page — draw a line just below the
+          // baseline so links are visually recognizable, matching the
+          // underline the editor already shows for linked text.
+          const underlineY = lineY - obj.fontSize * 0.12;
+          pdfPage.drawLine({
+            start: { x: lineX, y: underlineY },
+            end: { x: lineX + lineWidth, y: underlineY },
+            thickness: Math.max(1, obj.fontSize * 0.05),
+            color: textColor,
+            opacity: obj.opacity,
+          });
+        }
+
+        lineY -= lineHeight;
       }
 
       if (obj.link) {
@@ -321,9 +363,6 @@ function hexToRgb(hex: string) {
   return rgb(r, g, b);
 }
 
-// The File System Access API (showSaveFilePicker) isn't in TypeScript's
-// built-in DOM types yet, despite shipping in Chromium browsers for
-// several years — this minimal ambient type covers just what we use here.
 declare global {
   interface Window {
     showSaveFilePicker?: (options: {
@@ -339,10 +378,6 @@ declare global {
 }
 
 async function saveBytes(bytes: Uint8Array, filename: string): Promise<void> {
-  // Preferred path: native "Save As" dialog, lets the person pick both the
-  // filename and the destination folder. Only available in Chromium-based
-  // browsers (Chrome, Edge, Opera) as of writing — Firefox and Safari have
-  // not implemented this API.
   if (window.showSaveFilePicker) {
     try {
       const handle = await window.showSaveFilePicker({
@@ -362,15 +397,6 @@ async function saveBytes(bytes: Uint8Array, filename: string): Promise<void> {
     }
   }
 
-  // Fallback for browsers without the File System Access API: a normal
-  // browser download using the chosen filename. The destination folder
-  // isn't choosable this way, but the browser's own download prompt
-  // still lets the person rename the file if their browser is configured
-  // to ask where to save downloads.
-  // pdf-lib's Uint8Array is typed against ArrayBufferLike, which TS's
-  // newer BlobPart type doesn't accept (it could theoretically be a
-  // SharedArrayBuffer). Copying into a fresh Uint8Array guarantees a plain
-  // ArrayBuffer backing, satisfying the type checker with no behavior change.
   const plainBytes = new Uint8Array(bytes);
   const blob = new Blob([plainBytes], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);

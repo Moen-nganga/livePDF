@@ -1,14 +1,3 @@
-/**
- * A single ruler strip (horizontal or vertical), drawn to sit flush against
- * the top or left edge of PdfCanvas. Ticks are in PDF points (1pt = 1/72in,
- * matching Page.width/height in types/document.ts), with major ticks and
- * inch labels every 72pt and minor ticks every 18pt (quarter-inch).
- *
- * `lengthPx` should already be in the canvas's own pixel space (i.e.
- * page.width or page.height multiplied by PdfCanvas's ZOOM), so the ruler
- * lines up exactly with the canvas regardless of zoom level.
- */
-
 export const RULER_THICKNESS = 20;
 
 const POINTS_PER_INCH = 72;

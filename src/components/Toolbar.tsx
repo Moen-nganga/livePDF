@@ -39,23 +39,6 @@ function getMeasureContext(): CanvasRenderingContext2D {
   return measureCtx;
 }
 
-// Figures out which *rendered* line a character offset falls on for a given
-// text object. Text objects placed via the text tool are fabric.Textbox
-// instances, which soft-wrap to fit obj.width — the wrapping is entirely
-// visual, there's no '\n' in obj.text at the wrap points (only at explicit
-// paragraph breaks the user typed). Simply counting '\n' characters before
-// charIndex (the previous approach) always reported "line 1" for any word
-// past the first visual line of a wrapped paragraph — that's the "Line 1" /
-// "Line 1" bug where a misspelling on the second wrapped line was still
-// reported as line 1.
-//
-// This re-simulates Fabric's greedy word-wrap (fit words onto a line until
-// the next word would exceed obj.width, measured using the object's actual
-// font family/size/weight/style) to reconstruct the same line breaks Fabric
-// renders, then reports which line contains charIndex. It's an
-// approximation of Fabric's own algorithm — it doesn't special-case a
-// single word wider than obj.width, for instance — but it matches ordinary
-// prose closely and fixes the "everything is line 1" bug.
 function computeLineNumber(obj: TextObject, charIndex: number): number {
   const ctx = getMeasureContext();
   const style = obj.italic ? 'italic ' : '';

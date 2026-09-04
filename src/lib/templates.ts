@@ -698,7 +698,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'blank',
     label: 'Blank document',
-    description: 'Start with an empty page',
+    description: 'Blank empty page',
     color: '#f0f2f5',
     icon: '📄',
     buildPages: () => [blankPage()],
