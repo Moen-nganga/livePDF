@@ -46,7 +46,7 @@ export function DownloadDialog({ document, onClose }: Props) {
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Save as PDF</h3>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Save PDF File</h3>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: 16, cursor: 'pointer' }}>
             ✕
           </button>

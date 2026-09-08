@@ -6,7 +6,7 @@ import { Pool } from 'pg';
 // or env var editors trim it).
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: true },
 });
 
 // Call this once at startup, before the server starts accepting requests.
