@@ -29,20 +29,22 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? '';
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ?? `${APP_URL}/api/auth/google/callback`;
 
-// Short-lived cookies used only to survive the redirect round-trip to
-// Google and back -- not related to the long-lived session cookie above.
 const OAUTH_STATE_COOKIE = 'g_oauth_state';
 const OAUTH_DEVICE_COOKIE = 'g_oauth_device';
 const OAUTH_COOKIE_TTL_MS = 10 * 60 * 1000; // 10 minutes is plenty for a login redirect
 
-function setSessionCookie(res: express.Response, token: string) {
-  res.cookie(SESSION_COOKIE, token, {
+function sessionCookieOptions(maxAge: number) {
+  return {
     httpOnly: true, // not readable by client JS -- mitigates XSS token theft
     secure: isProd, // requires HTTPS in production; allow http for local dev
-    sameSite: 'lax', // sent on normal navigation/top-level GETs, blocked on cross-site POSTs (CSRF mitigation)
-    maxAge: SESSION_TTL_MS,
+    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+    maxAge,
     path: '/',
-  });
+  };
+}
+
+function setSessionCookie(res: express.Response, token: string) {
+  res.cookie(SESSION_COOKIE, token, sessionCookieOptions(SESSION_TTL_MS));
 }
 
 function clearSessionCookie(res: express.Response) {
@@ -50,13 +52,7 @@ function clearSessionCookie(res: express.Response) {
 }
 
 function setOAuthCookie(res: express.Response, name: string, value: string) {
-  res.cookie(name, value, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax', // 'lax' still attaches on the top-level GET redirect back from Google
-    maxAge: OAUTH_COOKIE_TTL_MS,
-    path: '/',
-  });
+  res.cookie(name, value, sessionCookieOptions(OAUTH_COOKIE_TTL_MS));
 }
 
 function clearOAuthCookies(res: express.Response) {
@@ -105,8 +101,6 @@ export async function optionalAuth(
   next();
 }
 
-// Rejects with 401 if there's no valid session. Use for routes that only
-// make sense for a logged-in user (billing, account settings, etc.).
 export async function requireAuth(
   req: express.Request,
   res: express.Response,
@@ -126,10 +120,6 @@ export async function requireAuth(
   next();
 }
 
-// Rejects with 401 if not signed in, or 403 if signed in but not an admin.
-// Layers on top of requireAuth's session check rather than duplicating it
-// -- mount as [requireAuth, requireAdmin] so req.userId is already set by
-// the time this runs.
 export async function requireAdmin(
   req: express.Request,
   res: express.Response,
