@@ -1,9 +1,6 @@
 import { create } from 'zustand';
 import { translations, type Locale } from '../lib/i18n/translations';
 
-// Same key AccountMenu.tsx has been writing to since the language picker
-// was first built (before real translations existed) -- reusing it means
-// whatever a user already picked keeps working instead of resetting.
 const LANGUAGE_STORAGE_KEY = 'preferredLanguage';
 
 function detectInitialLocale(): Locale {
@@ -15,10 +12,6 @@ function detectInitialLocale(): Locale {
 interface I18nState {
   locale: Locale;
   setLocale: (locale: Locale) => void;
-  // Looks up `key` in the current locale, falling back to English and
-  // then to the raw key itself if a translation is missing -- this way a
-  // string that hasn't been translated yet for a given language shows up
-  // in English rather than a blank or a raw key like "landing.signIn".
   t: (key: string, vars?: Record<string, string | number>) => string;
 }
 
