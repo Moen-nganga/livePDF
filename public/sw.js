@@ -20,6 +20,9 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
+
+  if (url.origin !== self.location.origin) return;
+
   const isNavigation =
     request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html';
 
