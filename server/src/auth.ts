@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { nanoid } from 'nanoid';
+import { OAuth2Client } from 'google-auth-library';
 import { usersRepo, sessionsRepo, documentsRepo } from './db.js';
 
 const SESSION_COOKIE = 'session';
@@ -28,10 +29,11 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? '';
 // Cloud Console for this OAuth client, including scheme, host, and path.
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ?? `${APP_URL}/api/auth/google/callback`;
-
 const OAUTH_STATE_COOKIE = 'g_oauth_state';
 const OAUTH_DEVICE_COOKIE = 'g_oauth_device';
 const OAUTH_COOKIE_TTL_MS = 10 * 60 * 1000; // 10 minutes is plenty for a login redirect
+
+const oneTapClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 function sessionCookieOptions(maxAge: number) {
   return {
@@ -219,6 +221,40 @@ authRouter.get('/google/callback', async (req, res) => {
   } catch (err) {
     console.error('Google OAuth callback failed:', err);
     res.redirect(`${APP_URL}/?authError=google`);
+  }
+});
+
+authRouter.post('/google/onetap', async (req, res) => {
+  const credential = req.body?.credential;
+  const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : null;
+
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ error: 'google_not_configured' });
+  }
+  if (typeof credential !== 'string' || !credential) {
+    return res.status(400).json({ error: 'Missing credential' });
+  }
+
+  try {
+    const ticket = await oneTapClient.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+
+    if (!payload?.email || !payload.email_verified) {
+      return res.status(401).json({ error: 'google_unverified' });
+    }
+
+    const normalizedEmail = payload.email.toLowerCase();
+    const user = await usersRepo.findOrCreate(normalizedEmail, nanoid());
+
+    await establishSession(res, user.id, deviceId);
+
+    res.json({ user: { id: user.id, email: user.email, isAdmin: isAdminEmail(user.email) } });
+  } catch (err) {
+    console.error('Google One Tap verification failed:', err);
+    res.status(401).json({ error: 'Invalid credential' });
   }
 });
 

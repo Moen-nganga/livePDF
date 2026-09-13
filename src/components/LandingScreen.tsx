@@ -44,6 +44,49 @@ function pushLandingSub(sub: LandingSub) {
   window.history.pushState({ ...window.history.state, landingSub: sub }, '', window.location.href);
 }
 
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string;
+            callback: (response: { credential: string }) => void;
+            auto_select?: boolean;
+            cancel_on_tap_outside?: boolean;
+          }) => void;
+          prompt: () => void;
+        };
+      };
+    };
+  }
+}
+
+const GOOGLE_ONE_TAP_SCRIPT_ID = 'google-identity-services';
+
+function loadGoogleIdentityScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.id) {
+      resolve();
+      return;
+    }
+    const existing = document.getElementById(GOOGLE_ONE_TAP_SCRIPT_ID) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('Failed to load Google Identity Services')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = GOOGLE_ONE_TAP_SCRIPT_ID;
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+    document.head.appendChild(script);
+  });
+}
+
 export function LandingScreen({ onEnter }: Props) {
   const loadDocument = useEditorStore((s) => s.loadDocument);
   const [recent, setRecent] = useState<DocumentSummary[]>([]);
@@ -62,9 +105,6 @@ export function LandingScreen({ onEnter }: Props) {
   const [showAdminScreen, setShowAdminScreen] = useState(false);
   const [limitReachedMessage, setLimitReachedMessage] = useState<string | null>(null);
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
-  // Set once the post-checkout poll below resolves (either way) -- drives
-  // UpgradeStatusDialog instead of a blocking native alert(). null means
-  // no dialog is showing.
   const [upgradeStatus, setUpgradeStatus] = useState<{ success: boolean } | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
 
@@ -92,7 +132,6 @@ export function LandingScreen({ onEnter }: Props) {
     return copy;
   }, [recent, recentSort]);
 
-  // Close the sort dropdown on an outside click.
   useEffect(() => {
     if (!sortMenuOpen) return;
     function onClick(e: MouseEvent) {
@@ -122,7 +161,6 @@ export function LandingScreen({ onEnter }: Props) {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-
   const isPremium = useSubscriptionStore((s) => s.isPremium());
   const isAdmin = !!authUser?.isAdmin;
 
@@ -150,13 +188,6 @@ export function LandingScreen({ onEnter }: Props) {
 
     if (upgraded) {
       (async () => {
-        // The Stripe webhook that actually grants Premium access
-        // (checkout.session.completed -> subscriptionsRepo.upsert in
-        // stripe.ts) runs asynchronously and can land a moment after
-        // Stripe redirects the browser back here. A single fetchSubscription
-        // right after redirect can race it and still see the old "free"
-        // row, showing a false "Free plan" badge and a misleading success
-        // message. Poll briefly instead of trusting the first result.
         const POLL_ATTEMPTS = 5;
         const POLL_DELAY_MS = 1500;
         let becamePremium = false;
@@ -173,7 +204,7 @@ export function LandingScreen({ onEnter }: Props) {
         setUpgradeStatus({ success: becamePremium });
       })();
     } else if (canceled) {
-      // No message needed -- the user just clicked "back" from checkout.
+      // no message needed
     }
 
     if (upgraded || canceled) {
@@ -184,6 +215,40 @@ export function LandingScreen({ onEnter }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (authStatus !== 'unauthenticated') return;
+
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (!clientId) return;
+
+    let cancelled = false;
+
+    loadGoogleIdentityScript()
+      .then(() => {
+        if (cancelled || !window.google) return;
+        window.google.accounts.id.initialize({
+          client_id: clientId,
+          auto_select: false,
+          cancel_on_tap_outside: true,
+          callback: async (response) => {
+            try {
+              await api.googleOneTapSignIn(response.credential);
+              await fetchMe();
+              await fetchSubscription();
+            } catch (err) {
+              console.error('Google One Tap sign-in failed:', err);
+            }
+          },
+        });
+        window.google.accounts.id.prompt();
+      })
+      .catch((err) => console.error(err));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus, fetchMe, fetchSubscription]);
 
   function requestUpgrade() {
     if (authStatus !== 'authenticated') {
@@ -226,13 +291,9 @@ export function LandingScreen({ onEnter }: Props) {
       onEnter();
     } catch (err) {
       if (err instanceof WeeklyLimitError) {
-        // Don't open the document at all -- it can never actually save,
-        // so letting the user start editing it would just be a trap.
         setLimitReachedMessage(err.message);
         return;
       }
-      // A generic failure (network hiccup, server error) — still open the
-      // doc locally, autosave will retry once things recover.
       const doc = {
         id: nanoid(),
         title: template.id === 'blank' ? 'Untitled document' : template.label,
@@ -295,7 +356,6 @@ export function LandingScreen({ onEnter }: Props) {
       fontFamily: 'var(--font-family)',
       overflowY: 'auto',
     }}>
-      {/* ── Top bar ────────────────────────────────────── */}
       <header style={{
         background: 'var(--color-surface)',
         borderBottom: '1.5px solid var(--color-border)',
@@ -324,10 +384,6 @@ export function LandingScreen({ onEnter }: Props) {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20, flexShrink: 0 }}>
-          {/* Only shown once there's room -- on mobile the sign-in button
-              or account menu already crowds this narrow header, and this
-              line is a nice-to-have, not something a small-screen user
-              needs to see. */}
           {!isMobile && (
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
               {t('landing.savedAutomatically')}
@@ -388,14 +444,12 @@ export function LandingScreen({ onEnter }: Props) {
         </div>
       </header>
 
-      {/* ── Main content ───────────────────────────────── */}
       <div style={{
         maxWidth: 1020,
         margin: '0 auto',
         padding: isMobile ? '20px 12px 32px' : '44px 28px 48px',
       }}>
 
-        {/* ── Templates section ──────────────────────── */}
         <div style={{
           background: 'var(--color-surface)',
           border: '1.5px solid var(--color-border)',
@@ -404,7 +458,6 @@ export function LandingScreen({ onEnter }: Props) {
           marginBottom: isMobile ? 18 : 28,
           overflow: 'hidden',
         }}>
-          {/* Section header */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -436,7 +489,6 @@ export function LandingScreen({ onEnter }: Props) {
             </div>
           </div>
 
-          {/* Template grid */}
           <div style={{
             display: 'grid',
             gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 104 : 132}px, 1fr))`,
@@ -455,9 +507,6 @@ export function LandingScreen({ onEnter }: Props) {
             ))}
           </div>
 
-          {/* More templates toggle -- shown to everyone, premium or not, to
-              keep the initial grid short. The only difference for premium
-              users is that nothing behind it is actually locked. */}
           {extraTemplates.length > 0 && (
             <div style={{ padding: isMobile ? '0 16px 16px' : '0 24px 24px', display: 'flex', justifyContent: 'center' }}>
               <button
@@ -515,7 +564,6 @@ export function LandingScreen({ onEnter }: Props) {
           )}
         </div>
 
-        {/* ── Recent documents section ───────────────── */}
         <div style={{
           background: 'var(--color-surface)',
           border: '1.5px solid var(--color-border)',
@@ -523,7 +571,6 @@ export function LandingScreen({ onEnter }: Props) {
           boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
           overflow: 'hidden',
         }}>
-          {/* Section header */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -568,10 +615,6 @@ export function LandingScreen({ onEnter }: Props) {
                       <path d="M4 4h8M4 8h5M4 12h2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                       <path d="M12 8v5m0 0l-2-2m2 2l2-2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    {/* On mobile there just isn't room for both the icon and
-                        the full label next to the document count pill --
-                        the icon alone (with the dropdown itself still
-                        showing full labels) keeps this row from wrapping. */}
                     {!isMobile && SORT_OPTIONS.find((o) => o.value === recentSort)?.label}
                     <svg
                       width="9" height="9" viewBox="0 0 10 10" fill="none"
@@ -645,7 +688,6 @@ export function LandingScreen({ onEnter }: Props) {
             </div>
           </div>
 
-          {/* Recent content */}
           {loadingRecent && (
             <div style={{ padding: '32px 24px', fontSize: 13, color: 'var(--color-text-muted)', textAlign: 'center' }}>
               Loading recent documents…
@@ -666,10 +708,6 @@ export function LandingScreen({ onEnter }: Props) {
 
           {!loadingRecent && recent.length > 0 && (
             <div>
-              {/* Table header row -- collapsed to just Document/Actions on
-                  mobile since there's no room for a separate "Last modified"
-                  column; that date instead moves under the title in each
-                  row (see RecentCard). */}
               {!isMobile && (
                 <div style={{
                   display: 'grid',
@@ -685,7 +723,6 @@ export function LandingScreen({ onEnter }: Props) {
                   ))}
                 </div>
               )}
-              {/* Document rows */}
               {sortedRecent.map((doc, i) => (
                 <RecentCard
                   key={doc.id}
@@ -701,7 +738,6 @@ export function LandingScreen({ onEnter }: Props) {
         </div>
       </div>
 
-      {/* ── Footer ─────────────────────────────────────── */}
       <footer id="app-footer" style={{
         background: '#0a0a0a',
         marginTop: 8,
@@ -736,7 +772,7 @@ export function LandingScreen({ onEnter }: Props) {
               { label: 'Privacy Policy', onClick: () => openStaticPage('privacy') },
               { label: 'Terms of Service', onClick: () => openStaticPage('terms') },
               { label: 'Help Center', onClick: () => openStaticPage('help') },
-              { label: 'Contact', href: '/contact' }, // TODO: wire up once the Contact page exists
+              { label: 'Contact', href: '/contact' },
             ].map((link) =>
               'href' in link ? (
                 <a
@@ -841,9 +877,6 @@ function TemplateCard({
         position: 'relative',
       }}
     >
-      {/* Thumbnail -- clipped to the card's rounded top corners here,
-          rather than on the outer button, so this is the only part of the
-          card that can ever be clipped. */}
       <div style={{
         height: 108,
         background: template.color,
@@ -897,8 +930,6 @@ function TemplateCard({
           </div>
         )}
       </div>
-      {/* Label -- no fixed height and no overflow clipping, so the
-          description always wraps in full instead of being cut off. */}
       <div style={{ padding: '10px 12px 12px' }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text)', lineHeight: 1.3, overflowWrap: 'break-word' }}>
           {template.label}
@@ -936,7 +967,6 @@ function TemplateThumbnail({ id }: { id: string }) {
   }
 }
 
-/** Shared paper-card wrapper used by every thumbnail */
 function Paper({ children }: { children: React.ReactNode }) {
   return (
     <svg width="80" height="100" viewBox="0 0 80 100" fill="none" xmlns="http://www.w3.org/2000/svg"
@@ -956,7 +986,6 @@ function BlankThumbnail() {
       <rect x="12" y="38" width="56" height="2" rx="1" fill="#efefef"/>
       <rect x="12" y="44" width="56" height="2" rx="1" fill="#efefef"/>
       <rect x="12" y="50" width="32" height="2" rx="1" fill="#efefef"/>
-      {/* folded corner */}
       <path d="M64 0 L80 0 L80 16 Z" fill="#f0f2f5"/>
       <path d="M64 0 L64 16 L80 16" fill="none" stroke="#dadce0" strokeWidth="1"/>
     </Paper>
@@ -966,26 +995,19 @@ function BlankThumbnail() {
 function ResumeThumbnail() {
   return (
     <Paper>
-      {/* header band */}
       <rect width="80" height="22" rx="3" fill="#4a90d9"/>
-      {/* avatar circle */}
       <circle cx="16" cy="11" r="7" fill="white" fillOpacity="0.25"/>
       <circle cx="16" cy="9" r="3" fill="white" fillOpacity="0.5"/>
       <path d="M9 18 Q16 14 23 18" fill="white" fillOpacity="0.5"/>
-      {/* name lines */}
       <rect x="27" y="7" width="30" height="3" rx="1.5" fill="white" fillOpacity="0.9"/>
       <rect x="27" y="13" width="20" height="2" rx="1" fill="white" fillOpacity="0.5"/>
-      {/* section label */}
       <rect x="8" y="28" width="18" height="2" rx="1" fill="#4a90d9"/>
-      {/* content lines */}
       <rect x="8" y="33" width="64" height="1.5" rx="0.75" fill="#e0e0e0"/>
       <rect x="8" y="37" width="55" height="1.5" rx="0.75" fill="#e0e0e0"/>
       <rect x="8" y="41" width="60" height="1.5" rx="0.75" fill="#e0e0e0"/>
-      {/* section label 2 */}
       <rect x="8" y="49" width="22" height="2" rx="1" fill="#4a90d9"/>
       <rect x="8" y="54" width="64" height="1.5" rx="0.75" fill="#e0e0e0"/>
       <rect x="8" y="58" width="48" height="1.5" rx="0.75" fill="#e0e0e0"/>
-      {/* skills dots */}
       <rect x="8" y="66" width="14" height="2" rx="1" fill="#e0e0e0"/>
       <rect x="25" y="66" width="14" height="2" rx="1" fill="#e0e0e0"/>
       <rect x="42" y="66" width="14" height="2" rx="1" fill="#e0e0e0"/>
@@ -996,24 +1018,18 @@ function ResumeThumbnail() {
 function InvoiceThumbnail() {
   return (
     <Paper>
-      {/* INVOICE title */}
       <rect x="8" y="8" width="30" height="4" rx="2" fill="#1a73e8"/>
-      {/* logo placeholder */}
       <rect x="56" y="8" width="16" height="8" rx="2" fill="#e8f0fe"/>
-      {/* divider */}
       <rect x="8" y="18" width="64" height="1" rx="0.5" fill="#e0e0e0"/>
-      {/* from / to blocks */}
       <rect x="8" y="22" width="12" height="1.5" rx="0.75" fill="#9aa0a6"/>
       <rect x="8" y="25.5" width="24" height="1.5" rx="0.75" fill="#dadce0"/>
       <rect x="8" y="29" width="20" height="1.5" rx="0.75" fill="#dadce0"/>
       <rect x="44" y="22" width="12" height="1.5" rx="0.75" fill="#9aa0a6"/>
       <rect x="44" y="25.5" width="28" height="1.5" rx="0.75" fill="#dadce0"/>
       <rect x="44" y="29" width="20" height="1.5" rx="0.75" fill="#dadce0"/>
-      {/* table header */}
       <rect x="8" y="36" width="64" height="6" rx="1" fill="#e8f0fe"/>
       <rect x="10" y="38.5" width="20" height="1.5" rx="0.75" fill="#1a73e8" fillOpacity="0.6"/>
       <rect x="58" y="38.5" width="12" height="1.5" rx="0.75" fill="#1a73e8" fillOpacity="0.6"/>
-      {/* table rows */}
       {[0,1,2].map(i => (
         <g key={i}>
           <rect x="8" y={44 + i*7} width="64" height="5" rx="0.5" fill={i % 2 === 0 ? '#f8f9fa' : 'white'}/>
@@ -1021,7 +1037,6 @@ function InvoiceThumbnail() {
           <rect x="60" y={46 + i*7} width="10" height="1.5" rx="0.75" fill="#dadce0"/>
         </g>
       ))}
-      {/* total */}
       <rect x="44" y="67" width="28" height="5" rx="1" fill="#1a73e8"/>
       <rect x="46" y="69" width="20" height="1.5" rx="0.75" fill="white" fillOpacity="0.8"/>
     </Paper>
@@ -1031,15 +1046,11 @@ function InvoiceThumbnail() {
 function LetterThumbnail() {
   return (
     <Paper>
-      {/* date line */}
       <rect x="8" y="8" width="28" height="2" rx="1" fill="#e0e0e0"/>
-      {/* recipient */}
       <rect x="8" y="16" width="36" height="2" rx="1" fill="#dadce0"/>
       <rect x="8" y="20" width="28" height="2" rx="1" fill="#dadce0"/>
       <rect x="8" y="24" width="32" height="2" rx="1" fill="#dadce0"/>
-      {/* salutation */}
       <rect x="8" y="32" width="40" height="2" rx="1" fill="#c0c0c0"/>
-      {/* body paragraphs */}
       <rect x="8" y="38" width="64" height="1.5" rx="0.75" fill="#e8e8e8"/>
       <rect x="8" y="41.5" width="64" height="1.5" rx="0.75" fill="#e8e8e8"/>
       <rect x="8" y="45" width="64" height="1.5" rx="0.75" fill="#e8e8e8"/>
@@ -1047,7 +1058,6 @@ function LetterThumbnail() {
       <rect x="8" y="55" width="64" height="1.5" rx="0.75" fill="#e8e8e8"/>
       <rect x="8" y="58.5" width="64" height="1.5" rx="0.75" fill="#e8e8e8"/>
       <rect x="8" y="62" width="40" height="1.5" rx="0.75" fill="#e8e8e8"/>
-      {/* sign-off */}
       <rect x="8" y="70" width="32" height="2" rx="1" fill="#dadce0"/>
       <rect x="8" y="78" width="40" height="2" rx="1" fill="#dadce0"/>
       <rect x="8" y="82" width="24" height="2" rx="1" fill="#dadce0"/>
@@ -1058,12 +1068,9 @@ function LetterThumbnail() {
 function MeetingThumbnail() {
   return (
     <Paper>
-      {/* title bar */}
       <rect x="8" y="8" width="50" height="4" rx="2" fill="#188038"/>
       <rect x="8" y="15" width="36" height="2" rx="1" fill="#e0e0e0"/>
-      {/* divider */}
       <rect x="8" y="21" width="64" height="1" rx="0.5" fill="#e0e0e0"/>
-      {/* agenda items with checkboxes */}
       {[0,1,2,3].map(i => (
         <g key={i}>
           <rect x="8" y={26 + i*10} width="6" height="6" rx="1" stroke="#dadce0" strokeWidth="1" fill="white"/>
@@ -1071,7 +1078,6 @@ function MeetingThumbnail() {
           <rect x="18" y={28 + i*10} width="36" height="2" rx="1" fill="#e0e0e0"/>
         </g>
       ))}
-      {/* notes section */}
       <rect x="8" y="68" width="22" height="2" rx="1" fill="#188038"/>
       <rect x="8" y="73" width="64" height="1.5" rx="0.75" fill="#efefef"/>
       <rect x="8" y="77" width="55" height="1.5" rx="0.75" fill="#efefef"/>
@@ -1083,16 +1089,12 @@ function MeetingThumbnail() {
 function ReportThumbnail() {
   return (
     <Paper>
-      {/* cover color band */}
       <rect width="80" height="42" rx="3" fill="#5c6bc0"/>
-      {/* decorative lines on cover */}
       <rect x="0" y="30" width="80" height="2" fill="white" fillOpacity="0.1"/>
       <rect x="0" y="35" width="80" height="1" fill="white" fillOpacity="0.08"/>
-      {/* title lines */}
       <rect x="10" y="12" width="44" height="4" rx="2" fill="white" fillOpacity="0.9"/>
       <rect x="10" y="19" width="32" height="2.5" rx="1.25" fill="white" fillOpacity="0.55"/>
       <rect x="10" y="24" width="24" height="2" rx="1" fill="white" fillOpacity="0.35"/>
-      {/* bar chart on lower half */}
       <rect x="8" y="50" width="14" height="2" rx="1" fill="#9fa8da"/>
       <rect x="14" y="72" width="8" height="18" rx="1" fill="#9fa8da"/>
       <rect x="26" y="62" width="8" height="28" rx="1" fill="#5c6bc0"/>
@@ -1107,23 +1109,16 @@ function ReportThumbnail() {
 function CertificateThumbnail() {
   return (
     <Paper>
-      {/* ornate border */}
       <rect x="4" y="4" width="72" height="92" rx="2" fill="none" stroke="#c8a84b" strokeWidth="2"/>
       <rect x="7" y="7" width="66" height="86" rx="1" fill="none" stroke="#c8a84b" strokeWidth="0.75" strokeDasharray="3 2"/>
-      {/* header */}
       <rect x="20" y="13" width="40" height="3" rx="1.5" fill="#c8a84b"/>
-      {/* certificate of text */}
       <rect x="16" y="19" width="48" height="2" rx="1" fill="#e0c97a" fillOpacity="0.7"/>
-      {/* trophy / medal */}
       <circle cx="40" cy="40" r="12" fill="#fff8e7" stroke="#c8a84b" strokeWidth="1.5"/>
       <path d="M34 40 Q40 34 46 40 Q40 48 34 40Z" fill="#c8a84b" fillOpacity="0.5"/>
       <circle cx="40" cy="40" r="4" fill="#c8a84b"/>
-      {/* recipient name area */}
       <rect x="14" y="58" width="52" height="3" rx="1.5" fill="#c8a84b" fillOpacity="0.4"/>
-      {/* description lines */}
       <rect x="18" y="65" width="44" height="1.5" rx="0.75" fill="#e0e0e0"/>
       <rect x="22" y="69" width="36" height="1.5" rx="0.75" fill="#e0e0e0"/>
-      {/* signature lines */}
       <rect x="13" y="82" width="22" height="1" rx="0.5" fill="#c8a84b" fillOpacity="0.5"/>
       <rect x="45" y="82" width="22" height="1" rx="0.5" fill="#c8a84b" fillOpacity="0.5"/>
     </Paper>
@@ -1328,13 +1323,11 @@ function AnalyticsDashboardThumbnail() {
       {[0,1,2,3].map(i => (
         <rect key={i} x={8+i*17} y="22" width="14" height="12" rx="1.5" fill="#e0f7fa" stroke="#0097a7" strokeWidth="0.5"/>
       ))}
-      {/* bar chart */}
       <rect x="8" y="42" width="30" height="34" rx="1" fill="#f8f9fa" stroke="#dadce0" strokeWidth="0.5"/>
       <rect x="12" y="64" width="4" height="10" fill="#0097a7"/>
       <rect x="18" y="58" width="4" height="16" fill="#0097a7"/>
       <rect x="24" y="50" width="4" height="24" fill="#0097a7"/>
       <rect x="30" y="60" width="4" height="14" fill="#0097a7"/>
-      {/* second bar chart */}
       <rect x="42" y="42" width="30" height="34" rx="1" fill="#f8f9fa" stroke="#dadce0" strokeWidth="0.5"/>
       <rect x="46" y="52" width="5" height="22" fill="#3949ab"/>
       <rect x="53" y="60" width="5" height="14" fill="#3949ab"/>
@@ -1365,9 +1358,6 @@ function RecentCard({
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'grid',
-        // Mobile drops the separate "Last modified" column entirely (see
-        // below, it's folded into the title cell instead) and gives the
-        // Actions cell just enough width for the compact Open button/badge.
         gridTemplateColumns: isMobile ? '1fr 84px' : '1fr 140px 120px',
         alignItems: 'center',
         padding: isMobile ? '12px 16px' : '14px 24px',
@@ -1380,7 +1370,6 @@ function RecentCard({
       }}
       onClick={onClick}
     >
-      {/* Name + icon */}
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 12, overflow: 'hidden', minWidth: 0 }}>
         <div style={{
           width: isMobile ? 30 : 36, height: isMobile ? 37 : 44, flexShrink: 0,
@@ -1403,8 +1392,6 @@ function RecentCard({
           }}>
             {doc.title || 'Untitled document'}
           </div>
-          {/* Last-modified date, folded in here only on mobile since there's
-              no separate column for it at this width. */}
           {isMobile && (
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
               {formatAgo(doc.updatedAt)}
@@ -1413,14 +1400,12 @@ function RecentCard({
         </div>
       </div>
 
-      {/* Last modified -- desktop/tablet only, mobile shows it under the title instead */}
       {!isMobile && (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
           {formatAgo(doc.updatedAt)}
         </div>
       )}
 
-      {/* Open button */}
       <div style={{ textAlign: 'right' }}>
         {locked ? (
           <span
