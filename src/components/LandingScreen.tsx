@@ -21,6 +21,10 @@ interface Props {
   onEnter: () => void;
 }
 
+type FooterLink =
+  | { label: string; href: string }
+  | { label: string; onClick: () => void };
+
 function useIsMobile(breakpoint = 640): boolean {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= breakpoint
@@ -40,7 +44,7 @@ function useIsMobile(breakpoint = 640): boolean {
 type LandingSub = 'auth' | 'upgrade' | 'privacy' | 'terms' | 'help' | 'admin' | null;
 
 function pushLandingSub(sub: LandingSub) {
-  if ((window.history.state?.landingSub ?? null) === sub) return; // already there
+  if ((window.history.state?.landingSub ?? null) === sub) return;
   window.history.pushState({ ...window.history.state, landingSub: sub }, '', window.location.href);
 }
 
@@ -107,6 +111,9 @@ export function LandingScreen({ onEnter }: Props) {
   const [premiumTemplate, setPremiumTemplate] = useState<TemplateDefinition | null>(null);
   const [upgradeStatus, setUpgradeStatus] = useState<{ success: boolean } | null>(null);
   const [moreTemplatesOpen, setMoreTemplatesOpen] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [emailCopied, setEmailCopied] = useState(false);
+  const contactRef = useRef<HTMLDivElement>(null);
 
   const [usage, setUsage] = useState<UsageInfo | null>(null);
 
@@ -142,6 +149,17 @@ export function LandingScreen({ onEnter }: Props) {
     window.addEventListener('mousedown', onClick);
     return () => window.removeEventListener('mousedown', onClick);
   }, [sortMenuOpen]);
+
+  useEffect(() => {
+    if (!contactOpen) return;
+    function onClick(e: MouseEvent) {
+      if (contactRef.current && !contactRef.current.contains(e.target as Node)) {
+        setContactOpen(false);
+      }
+    }
+    window.addEventListener('mousedown', onClick);
+    return () => window.removeEventListener('mousedown', onClick);
+  }, [contactOpen]);
 
   useEffect(() => {
     if (!('landingSub' in (window.history.state ?? {}))) {
@@ -204,7 +222,6 @@ export function LandingScreen({ onEnter }: Props) {
         setUpgradeStatus({ success: becamePremium });
       })();
     } else if (canceled) {
-      // no message needed
     }
 
     if (upgraded || canceled) {
@@ -347,6 +364,21 @@ export function LandingScreen({ onEnter }: Props) {
 
   if (showAdminScreen) {
     return <AdminScreen onBack={() => window.history.back()} />;
+  }
+
+  const footerLinks: FooterLink[] = [
+    { label: 'Privacy Policy', onClick: () => openStaticPage('privacy') },
+    { label: 'Terms of Service', onClick: () => openStaticPage('terms') },
+    { label: 'Help Center', onClick: () => openStaticPage('help') },
+  ];
+
+  const CONTACT_EMAIL = 'livepdfapp@outlook.com';
+
+  function copyContactEmail() {
+    navigator.clipboard.writeText(CONTACT_EMAIL).then(() => {
+      setEmailCopied(true);
+      setTimeout(() => setEmailCopied(false), 2000);
+    });
   }
 
   return (
@@ -768,12 +800,7 @@ export function LandingScreen({ onEnter }: Props) {
             </span>
           </div>
           <nav style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? 16 : 28 }}>
-            {[
-              { label: 'Privacy Policy', onClick: () => openStaticPage('privacy') },
-              { label: 'Terms of Service', onClick: () => openStaticPage('terms') },
-              { label: 'Help Center', onClick: () => openStaticPage('help') },
-              { label: 'Contact', href: '/contact' },
-            ].map((link) =>
+            {footerLinks.map((link) =>
               'href' in link ? (
                 <a
                   key={link.label}
@@ -808,6 +835,97 @@ export function LandingScreen({ onEnter }: Props) {
                 </button>
               )
             )}
+            <div ref={contactRef} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setContactOpen((v) => !v)}
+                style={{
+                  fontSize: 13.5,
+                  color: contactOpen ? '#ffffff' : '#a2a5aa',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = contactOpen ? '#ffffff' : '#a2a5aa')}
+              >
+                Contact
+              </button>
+              {contactOpen && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: 'calc(100% + 12px)',
+                  left: 0,
+                  minWidth: 260,
+                  background: 'var(--color-surface)',
+                  border: '1.5px solid var(--color-border)',
+                  borderRadius: 10,
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.25)',
+                  padding: 14,
+                  zIndex: 30,
+                }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 8 }}>
+                    Get in touch
+                  </div>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    padding: '8px 10px',
+                    borderRadius: 8,
+                    background: '#f1f3f4',
+                    marginBottom: 10,
+                  }}>
+                    <span style={{ fontSize: 12.5, color: 'var(--color-text)', overflowWrap: 'anywhere' }}>
+                      {CONTACT_EMAIL}
+                    </span>
+                    <button
+                      onClick={copyContactEmail}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        border: '1px solid var(--color-border)',
+                        background: 'var(--color-surface)',
+                        color: 'var(--color-accent)',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {emailCopied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <a
+                      href={`https://mail.google.com/mail/?view=cm&fs=1&to=${CONTACT_EMAIL}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12.5, color: 'var(--color-accent)', textDecoration: 'none' }}
+                    >
+                      Open in Gmail
+                    </a>
+                    <a
+                      href={`https://outlook.office.com/mail/deeplink/compose?to=${CONTACT_EMAIL}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12.5, color: 'var(--color-accent)', textDecoration: 'none' }}
+                    >
+                      Open in Outlook
+                    </a>
+                    <a
+                      href={`mailto:${CONTACT_EMAIL}`}
+                      style={{ fontSize: 12.5, color: 'var(--color-accent)', textDecoration: 'none' }}
+                    >
+                      Open in mail app
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
           </nav>
         </div>
       </footer>
