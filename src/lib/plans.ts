@@ -3,7 +3,7 @@ import type { PlanId } from './api';
 export interface PlanDisplay {
   id: PlanId;
   label: string;
-  priceUsd: number;
+  priceKes: number;
   interval: 'month' | 'year';
   tagline: string;
   features: string[];
@@ -22,7 +22,7 @@ export const PLANS: PlanDisplay[] = [
   {
     id: 'pro_monthly',
     label: 'Pro Monthly',
-    priceUsd: 8,
+    priceKes: 9,
     interval: 'month',
     tagline: 'Full access, billed monthly',
     features: PRO_FEATURES,
@@ -30,7 +30,7 @@ export const PLANS: PlanDisplay[] = [
   {
     id: 'pro_yearly',
     label: 'Pro Yearly',
-    priceUsd: 80,
+    priceKes: 90,
     interval: 'year',
     tagline: 'Full access, billed yearly (save ~17%)',
     features: PRO_FEATURES,

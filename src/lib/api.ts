@@ -220,8 +220,8 @@ export const api = {
     return res.json();
   },
 
-  async createStripeCheckout(planId: PlanId): Promise<string> {
-    const res = await fetch(`${API_BASE}/api/checkout/stripe`, {
+    async createPaystackCheckout(planId: PlanId): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/checkout/paystack`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',

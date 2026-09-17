@@ -56,6 +56,9 @@ export async function initDb(): Promise<void> {
       cancel_at_period_end BOOLEAN DEFAULT false
     );
 
+    ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS paystack_customer_code TEXT;
+    ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS paystack_subscription_code TEXT;
+
     -- Tracks Binance Pay orders from creation through to webhook
     -- confirmation. Needed because the Binance webhook payload only
     -- carries back the merchantTradeNo we gave it -- this table is what
@@ -254,6 +257,8 @@ export interface SubscriptionRow {
   provider: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  paystack_customer_code: string | null;
+  paystack_subscription_code: string | null;
   crypto_tx_ref: string | null;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
@@ -265,21 +270,29 @@ export const subscriptionsRepo = {
     return rows[0];
   },
 
+  async getByPaystackCustomerCode(customerCode: string): Promise<SubscriptionRow | undefined> {
+    const { rows } = await pool.query('SELECT * FROM subscriptions WHERE paystack_customer_code = $1', [customerCode]);
+    return rows[0];
+  },
+
   async upsert(row: Partial<SubscriptionRow> & { user_id: string }): Promise<void> {
     await pool.query(
       `INSERT INTO subscriptions (
          user_id, plan_id, status, provider, stripe_customer_id,
-         stripe_subscription_id, crypto_tx_ref, current_period_end, cancel_at_period_end
+         stripe_subscription_id, paystack_customer_code, paystack_subscription_code,
+         crypto_tx_ref, current_period_end, cancel_at_period_end
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (user_id) DO UPDATE SET
          plan_id = EXCLUDED.plan_id,
          status = EXCLUDED.status,
          provider = EXCLUDED.provider,
          stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, subscriptions.stripe_customer_id),
          stripe_subscription_id = COALESCE(EXCLUDED.stripe_subscription_id, subscriptions.stripe_subscription_id),
+         paystack_customer_code = COALESCE(EXCLUDED.paystack_customer_code, subscriptions.paystack_customer_code),
+         paystack_subscription_code = COALESCE(EXCLUDED.paystack_subscription_code, subscriptions.paystack_subscription_code),
          crypto_tx_ref = COALESCE(EXCLUDED.crypto_tx_ref, subscriptions.crypto_tx_ref),
-         current_period_end = EXCLUDED.current_period_end,
+         current_period_end = COALESCE(EXCLUDED.current_period_end, subscriptions.current_period_end),
          cancel_at_period_end = EXCLUDED.cancel_at_period_end`,
       [
         row.user_id,
@@ -288,6 +301,8 @@ export const subscriptionsRepo = {
         row.provider ?? null,
         row.stripe_customer_id ?? null,
         row.stripe_subscription_id ?? null,
+        row.paystack_customer_code ?? null,
+        row.paystack_subscription_code ?? null,
         row.crypto_tx_ref ?? null,
         row.current_period_end ?? null,
         row.cancel_at_period_end ?? false,

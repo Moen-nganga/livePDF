@@ -76,7 +76,7 @@ const FAQ_GROUPS: FaqGroup[] = [
       },
       {
         q: 'What payment methods are supported?',
-        a: 'We support card payments via Stripe.',
+        a: 'We support card payments via Paystack.',
       },
     ],
   },

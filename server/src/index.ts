@@ -6,7 +6,7 @@ import { nanoid } from 'nanoid';
 import { documentsRepo, sharesRepo, subscriptionsRepo, initDb } from './db.js';
 import { authRouter, requireAuth, optionalAuth, isAdminEmail } from './auth.js';
 import { adminRouter } from './admin.js';
-import { stripe, createCheckoutSession, handleStripeWebhookEvent } from './stripe.js';
+import { verifyPaystackSignature, createCheckoutSession, handlePaystackWebhookEvent } from './paystack.js';
 import { getChatReply, ChatServiceError, type ChatMessage } from './ai.js';
 import { usersRepo } from './db.js';
 import type { PlanId } from './plans.js';
@@ -21,27 +21,26 @@ app.use(
 );
 app.use(cookieParser());
 
-app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-  const signature = req.header('stripe-signature');
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!signature || !webhookSecret) {
-    return res.status(400).json({ error: 'Missing signature or webhook secret' });
+app.post('/api/webhooks/paystack', express.raw({ type: 'application/json' }), async (req, res) => {
+  const signature = req.header('x-paystack-signature');
+  if (!verifyPaystackSignature(req.body, signature)) {
+    return res.status(400).json({ error: 'Invalid signature' });
   }
 
   let event;
   try {
-    event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+    event = JSON.parse(req.body.toString('utf8'));
   } catch (err) {
-    console.error('Stripe webhook signature verification failed:', err);
-    return res.status(400).json({ error: 'Invalid signature' });
+    console.error('Failed to parse Paystack webhook body:', err);
+    return res.status(400).json({ error: 'Invalid payload' });
   }
 
   try {
-    await handleStripeWebhookEvent(event);
+    await handlePaystackWebhookEvent(event);
     res.json({ received: true });
   } catch (err) {
-    console.error('Error handling Stripe webhook event:', err);
-    // 500 tells Stripe to retry -- appropriate here since the failure is
+    console.error('Error handling Paystack webhook event:', err);
+    // 500 tells Paystack to retry -- appropriate here since the failure is
     // on our side (e.g. a transient DB error), not a bad event.
     res.status(500).json({ error: 'Internal error' });
   }
@@ -269,7 +268,7 @@ app.get('/api/subscription', requireAuth, async (req, res) => {
   });
 });
 
-app.post('/api/checkout/stripe', requireAuth, async (req, res) => {
+app.post('/api/checkout/paystack', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
   const planId = req.body?.planId as PlanId | undefined;
   if (planId !== 'pro_monthly' && planId !== 'pro_yearly') {

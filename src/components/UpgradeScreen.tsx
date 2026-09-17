@@ -15,7 +15,7 @@ export function UpgradeScreen({ onBack }: Props) {
     setError('');
     setLoading(true);
     try {
-      const url = await api.createStripeCheckout(selectedPlan);
+      const url = await api.createPaystackCheckout(selectedPlan);
       window.location.href = url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
@@ -107,7 +107,7 @@ export function UpgradeScreen({ onBack }: Props) {
                 {plan.label}
               </div>
               <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text)', marginTop: 4 }}>
-                ${plan.priceUsd}
+                ${plan.priceKes.toLocaleString()}
                 <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-muted)' }}>
                   {' '}/ {plan.interval}
                 </span>
@@ -165,7 +165,7 @@ export function UpgradeScreen({ onBack }: Props) {
             transition: 'box-shadow 0.15s ease, opacity 0.15s ease',
           }}
         >
-          {loading ? 'Redirecting…' : 'Pay with card (Stripe)'}
+           {loading ? 'Redirecting…' : 'Pay with card'}
         </button>
 
         <button

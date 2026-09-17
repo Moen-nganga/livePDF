@@ -36,7 +36,7 @@ export function TermsOfServiceScreen({ onBack }: Props) {
           limit and unlock premium templates, signatures, the spell checking feature, and the AI assistant.
         </p>
         <p style={{ marginTop: 8 }}>
-          Premium subscriptions are billed in advance through Stripe. Subscriptions
+          Premium subscriptions are billed in advance through Paystack. Subscriptions
           renew automatically at the end of each billing period unless you cancel before the renewal
           date. You can cancel anytime from your account settings; cancellation takes effect at the end
           of the current billing period, and we don't provide prorated refunds for partial periods.

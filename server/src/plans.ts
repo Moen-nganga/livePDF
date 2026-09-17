@@ -9,28 +9,34 @@ export const FEATURE_FLAGS: Record<PlanId, readonly string[]> = {
 export interface PlanDetails {
   id: PlanId;
   label: string;
-  priceUsd: number; // per billing interval
+  priceKes: number;
   interval: 'month' | 'year';
-  stripePriceEnvVar: string; // which env var holds this plan's Stripe Price ID
+  paystackPlanEnvVar: string;
 }
 
 export const PAID_PLANS: PlanDetails[] = [
   {
     id: 'pro_monthly',
     label: 'Pro Monthly',
-    priceUsd: 9,
+    priceKes: 9,
     interval: 'month',
-    stripePriceEnvVar: 'STRIPE_PRICE_MONTHLY',
+    paystackPlanEnvVar: 'PAYSTACK_PLAN_MONTHLY',
   },
   {
     id: 'pro_yearly',
     label: 'Pro Yearly',
-    priceUsd: 90,
+    priceKes: 90,
     interval: 'year',
-    stripePriceEnvVar: 'STRIPE_PRICE_YEARLY',
+    paystackPlanEnvVar: 'PAYSTACK_PLAN_YEARLY',
   },
 ];
 
 export function getPlanDetails(planId: string): PlanDetails | undefined {
   return PAID_PLANS.find((p) => p.id === planId);
+}
+
+export function getPlanIdByPaystackPlanCode(planCode: string | undefined): PlanId | undefined {
+  if (!planCode) return undefined;
+  const plan = PAID_PLANS.find((p) => process.env[p.paystackPlanEnvVar] === planCode);
+  return plan?.id;
 }
